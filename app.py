@@ -18,19 +18,30 @@ st.markdown("""
 <style>
     /* Imagem de Fundo */
     .stApp {
-        background-image: url("https://github.com/rcrystiandados/app-igreja/blob/main/logo.jpeg");
+        background-image: url("COLE_O_LINK_DA_FOTO_AQUI");
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
     }
     
-    /* Fundo branco semi-transparente para as áreas de conteúdo não sumirem no fundo */
+    /* Fundo branco SÓLIDO com sombra 3D mais forte para destacar da imagem branca */
     .block-container {
-        background-color: rgba(255, 255, 255, 0.92);
+        background-color: #FFFFFF; 
         padding-top: 2rem;
         padding-bottom: 5rem;
         border-radius: 15px;
-        box-shadow: 0px 4px 15px rgba(0,0,0,0.1);
+        box-shadow: 0px 8px 30px rgba(0, 0, 0, 0.18); 
+        border: 1px solid #E2E8F0; 
+    }
+
+    /* Cores das fontes - Forçando alto contraste */
+    p, li, span, label, div.stMarkdown {
+        color: #1F2937 !important; /* Cinza chumbo super legível */
+    }
+    
+    h1, h2, h3, h4, h5, h6 {
+        color: #1E3A8A !important; /* Azul escuro oficial */
+        font-weight: 600 !important;
     }
 
     /* Estilizando o Rodapé Fixo */
@@ -40,7 +51,7 @@ st.markdown("""
         bottom: 0;
         width: 100%;
         background-color: #1E3A8A;
-        color: white;
+        color: white !important;
         text-align: center;
         padding: 12px;
         font-size: 14px;
@@ -49,10 +60,9 @@ st.markdown("""
         box-shadow: 0px -2px 10px rgba(0,0,0,0.2);
     }
 </style>
-
 <!-- Injeção do Rodapé Fixo na tela -->
 <div class="rodape">
-    Desenvolvido por <strong>rcrystiandados</strong>  |  
+    Desenvolvido por <strong>Rodolfo Crystian</strong>  |  
     📧 Contato: rcrystiandados@gmail.com  |  
     📱 WhatsApp: (83) 9 9962-3735
 </div>
