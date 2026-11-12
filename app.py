@@ -18,7 +18,7 @@ st.markdown("""
 <style>
     /* Imagem de Fundo */
     .stApp {
-        background-image: url("COLE_O_LINK_DA_FOTO_AQUI");
+        background-image: url("https://github.com/rcrystiandados/app-igreja/blob/main/logo.jpeg?raw=true");
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
