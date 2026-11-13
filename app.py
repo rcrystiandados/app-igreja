@@ -18,30 +18,70 @@ st.markdown("""
 <style>
     /* Imagem de Fundo */
     .stApp {
-        background-image: url("https://github.com/rcrystiandados/app-igreja/blob/main/logo.jpeg?raw=true");
+        background-image: url("COLE_O_LINK_DA_FOTO_AQUI");
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
     }
     
-    /* Fundo branco SÓLIDO com sombra 3D mais forte para destacar da imagem branca */
+    /* Fundo branco SÓLIDO para a área central */
     .block-container {
-        background-color: #FFFFFF; 
-        padding-top: 2rem;
-        padding-bottom: 5rem;
-        border-radius: 15px;
-        box-shadow: 0px 8px 30px rgba(0, 0, 0, 0.18); 
-        border: 1px solid #E2E8F0; 
+        background-color: #FFFFFF !important; 
+        padding-top: 3rem !important;
+        padding-bottom: 5rem !important;
+        border-radius: 12px !important;
+        box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.15) !important; 
     }
 
-    /* Cores das fontes - Forçando alto contraste */
-    p, li, span, label, div.stMarkdown {
-        color: #1F2937 !important; /* Cinza chumbo super legível */
+    /* Cores dos Títulos */
+    h1, h2, h3, h4, h5, h6 {
+        color: #1E3A8A !important; 
+        font-weight: 700 !important;
+    }
+
+    /* Cores dos Textos Normais e Labels */
+    p, label, span, div.stMarkdown {
+        color: #333333 !important;
+    }
+
+    /* CORRIGINDO OS BOTÕES (Fundo Azul Escuro, Texto Branco) */
+    div.stButton > button {
+        background-color: #1E3A8A !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 6px !important;
+        padding: 10px 24px !important;
+        font-weight: bold !important;
+    }
+    /* Força o texto dentro do botão a ser branco */
+    div.stButton > button * {
+        color: #FFFFFF !important; 
+    }
+    div.stButton > button:hover {
+        background-color: #152C6B !important;
+        border-color: #152C6B !important;
+    }
+
+    /* CORRIGINDO AS CAIXAS DE AVISO (st.info, st.error, st.success) */
+    div[data-testid="stAlert"] {
+        background-color: #F0F7FF !important; /* Fundo azul bem clarinho */
+        border-left: 5px solid #1E3A8A !important;
+        color: #1E3A8A !important;
+    }
+    div[data-testid="stAlert"] * {
+        color: #1E3A8A !important;
+    }
+
+    /* CORRIGINDO AS CAIXAS DE INPUT (Campo de Senha, Formulários) */
+    input, div[data-baseweb="input"], div[data-baseweb="select"] > div {
+        background-color: #F8FAFC !important; /* Fundo quase branco */
+        color: #000000 !important; /* Texto digitado em preto */
+        border: 1px solid #CBD5E1 !important;
     }
     
-    h1, h2, h3, h4, h5, h6 {
-        color: #1E3A8A !important; /* Azul escuro oficial */
-        font-weight: 600 !important;
+    /* Cor do texto quando digita algo no input */
+    input::placeholder {
+        color: #94A3B8 !important;
     }
 
     /* Estilizando o Rodapé Fixo */
@@ -51,7 +91,7 @@ st.markdown("""
         bottom: 0;
         width: 100%;
         background-color: #1E3A8A;
-        color: white !important;
+        color: #FFFFFF !important;
         text-align: center;
         padding: 12px;
         font-size: 14px;
