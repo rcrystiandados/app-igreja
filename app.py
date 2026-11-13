@@ -7,6 +7,12 @@ import json
 import re
 import unicodedata
 
+try:
+    import exportacao
+    EXPORT_OK, EXPORT_ERRO = True, ""
+except Exception as _erro_import:  # arquivo exportacao.py ausente no repositório
+    EXPORT_OK, EXPORT_ERRO = False, str(_erro_import)
+
 # =====================================================================
 # 1. CONFIGURAÇÃO INICIAL
 # =====================================================================
@@ -443,6 +449,96 @@ def descrever(reg):
 
 
 # =====================================================================
+# 3c. EXPORTAÇÃO (EXCEL E PDF)
+# =====================================================================
+@st.cache_data(ttl=86400)
+def baixar_logo():
+    try:
+        import urllib.request
+        with urllib.request.urlopen(LOGO_URL, timeout=6) as r:
+            return r.read()
+    except Exception:
+        return None
+
+
+def _slug(texto):
+    return re.sub(r"[^a-z0-9]+", "_", _norm(texto)).strip("_")
+
+
+def bloco_exportacao(df_base, chave, incluir_contato=False):
+    """Painel para exportar o calendário (completo ou por região; anual, semestral ou mensal)."""
+    if not EXPORT_OK:
+        st.warning("A exportação não está disponível: o arquivo exportacao.py não foi encontrado "
+                   f"no repositório. Detalhe: {EXPORT_ERRO}")
+        return
+    eventos = exportacao.preparar_eventos(df_base, peso_evento)
+    if not eventos:
+        st.info("Ainda não há eventos para exportar.")
+        return
+
+    anos = sorted({e["ini"].year for e in eventos} | {e["fim"].year for e in eventos})
+    agora = datetime.now()
+    futuros = [a for a in anos if a >= agora.year]
+    ano_padrao = futuros[0] if futuros else anos[-1]
+    regioes = sorted({e["regiao"] for e in eventos if e["regiao"]})
+
+    c1, c2 = st.columns(2)
+    escopo = c1.radio("O que exportar", ["Calendário completo", "Por região"],
+                      horizontal=True, key=f"{chave}_escopo")
+    regiao = None
+    if escopo == "Por região":
+        regiao = c2.selectbox("Região", regioes, key=f"{chave}_regiao")
+
+    p1, p2, p3 = st.columns(3)
+    tipo_periodo = p1.selectbox("Período", ["Anual", "Semestral", "Mensal"], key=f"{chave}_periodo")
+    ano = p2.selectbox("Ano", anos, index=anos.index(ano_padrao), key=f"{chave}_ano")
+    semestre, mes = 1, 1
+    if tipo_periodo == "Semestral":
+        semestre = p3.selectbox("Semestre", [1, 2], format_func=lambda x: f"{x}º semestre", key=f"{chave}_sem")
+    elif tipo_periodo == "Mensal":
+        mes = p3.selectbox("Mês", list(range(1, 13)), index=agora.month - 1,
+                           format_func=lambda m: exportacao.MESES[m - 1], key=f"{chave}_mes")
+
+    formato = st.radio("Formato", ["PDF (visual)", "Excel"], horizontal=True, key=f"{chave}_formato")
+
+    ini, fim, rotulo = exportacao.intervalo(tipo_periodo, ano, semestre, mes)
+    selecionados = exportacao.filtrar(eventos, ini, fim, regiao)
+    st.caption(f"{len(selecionados)} evento(s) no período selecionado.")
+
+    sig = (escopo, regiao, tipo_periodo, ano, semestre, mes, formato, len(eventos), incluir_contato)
+    chave_arq = f"{chave}_arquivo"
+
+    if st.button("Gerar arquivo", key=f"{chave}_gerar", disabled=not selecionados):
+        titulo = "Calendário de Atividades MEN"
+        subtitulo = f"{rotulo} · {regiao if regiao else 'Todas as regiões'}"
+        if incluir_contato:
+            subtitulo += " · Uso interno"
+        try:
+            if formato.startswith("PDF"):
+                dados = exportacao.gerar_pdf(selecionados, titulo, subtitulo, incluir_contato, baixar_logo())
+                ext, mime = "pdf", "application/pdf"
+            else:
+                dados = exportacao.gerar_excel(selecionados, f"{titulo} - {subtitulo}", incluir_contato,
+                                               abas_por_regiao=regiao is None)
+                ext, mime = "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            st.session_state[chave_arq] = {
+                "sig": sig, "dados": dados, "mime": mime,
+                "nome": f"calendario_men_{_slug(regiao or 'completo')}_{_slug(rotulo)}.{ext}",
+                "rotulo": "PDF" if ext == "pdf" else "Excel",
+            }
+        except ImportError:
+            st.error("Faltam bibliotecas para exportar. Adicione `openpyxl` e `reportlab` ao arquivo "
+                     "requirements.txt do repositório.")
+        except Exception as erro:
+            st.error(f"Não foi possível gerar o arquivo: {erro}")
+
+    arq = st.session_state.get(chave_arq)
+    if arq and arq["sig"] == sig:
+        st.download_button(f"Baixar {arq['rotulo']}", data=arq["dados"], file_name=arq["nome"],
+                           mime=arq["mime"], key=f"{chave}_baixar")
+
+
+# =====================================================================
 # 4. MENU LATERAL
 # =====================================================================
 with st.sidebar:
@@ -455,7 +551,8 @@ with st.sidebar:
     PAGINAS = ["Início", "Calendário", "Cadastro de eventos", "Área da liderança"]
     if "pagina" not in st.session_state:
         st.session_state["pagina"] = "Início"
-    SUBMENU_LIDERANCA = [("Choques de agenda", "sub_choques"), ("Congregações", "sub_congregacoes")]
+    SUBMENU_LIDERANCA = [("Choques de agenda", "sub_choques"), ("Congregações", "sub_congregacoes"),
+                        ("Exportar calendário", "sub_exportar")]
     pagina_atual = st.session_state["pagina"]
     for nome_pag in PAGINAS:
         eh_lideranca = nome_pag == "Área da liderança"
@@ -552,6 +649,9 @@ try:
         if df.empty:
             st.info("O calendário ainda não possui eventos registrados.")
         else:
+            with st.expander("Exportar calendário (PDF ou Excel)"):
+                bloco_exportacao(df, "pub", incluir_contato=False)
+
             df_exibicao = df.copy()
             f1, f2 = st.columns(2)
             with f1:
@@ -939,6 +1039,10 @@ try:
                     st.link_button("Abrir planilha do banco de dados", PLANILHA_URL)
 
 
+            elif st.session_state["sub_lideranca"] == "Exportar calendário":
+                st.markdown("#### Exportar calendário")
+                st.caption("Na área da liderança, a exportação inclui cargo e WhatsApp dos responsáveis.")
+                bloco_exportacao(df, "adm", incluir_contato=True)
             else:
                 mapa_atual = lista_de_congregacoes()
                 total = sum(len(v) for v in mapa_atual.values())
