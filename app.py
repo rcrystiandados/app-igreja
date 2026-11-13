@@ -240,6 +240,26 @@ st.markdown("""
     }
     .block-container a[data-testid^="stBaseLinkButton"]:hover {background: #1E3A8A !important;}
     .block-container a[data-testid^="stBaseLinkButton"]:hover * {color: #FFFFFF !important;}
+
+    /* ---------- Bloco de exportação em destaque ---------- */
+    div[data-testid="stVerticalBlockBorderWrapper"]:has(.marca-exportar) {
+        background: #F3F7FF; border: 2px solid #1E3A8A !important;
+        border-left: 8px solid #1E3A8A !important; border-radius: 12px;
+        box-shadow: 0 4px 14px rgba(30,58,138,.15); padding: .6rem .8rem;
+    }
+    .exp-topo {display: flex; align-items: center; gap: .9rem; margin-bottom: .6rem;}
+    .exp-icone {
+        width: 46px; height: 46px; border-radius: 50%; background: #1E3A8A; color: #FFFFFF;
+        display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex: none;
+    }
+    .exp-titulo {font-size: 1.25rem; font-weight: 700; color: #1E3A8A; line-height: 1.2;}
+    .exp-sub {font-size: .9rem; color: #475569;}
+    div[data-testid="stDownloadButton"] button {
+        background-color: #2E7D5B !important; border: none !important; border-radius: 6px !important;
+        padding: .65rem 1.6rem !important; font-weight: 700 !important;
+    }
+    div[data-testid="stDownloadButton"] button, div[data-testid="stDownloadButton"] button * {color: #FFFFFF !important;}
+    div[data-testid="stDownloadButton"] button:hover {background-color: #256649 !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -465,7 +485,7 @@ def _slug(texto):
     return re.sub(r"[^a-z0-9]+", "_", _norm(texto)).strip("_")
 
 
-def bloco_exportacao(df_base, chave, incluir_contato=False):
+def _painel_exportacao(df_base, chave, incluir_contato=False):
     """Painel para exportar o calendário (completo ou por região; anual, semestral ou mensal)."""
     if not EXPORT_OK:
         st.warning("A exportação não está disponível: o arquivo exportacao.py não foi encontrado "
@@ -536,6 +556,20 @@ def bloco_exportacao(df_base, chave, incluir_contato=False):
     if arq and arq["sig"] == sig:
         st.download_button(f"Baixar {arq['rotulo']}", data=arq["dados"], file_name=arq["nome"],
                            mime=arq["mime"], key=f"{chave}_baixar")
+
+
+def bloco_exportacao(df_base, chave, incluir_contato=False):
+    """Bloco em destaque com o painel de exportação."""
+    with st.container(border=True):
+        st.markdown(
+            '<div class="marca-exportar"></div>'
+            '<div class="exp-topo"><div class="exp-icone">⬇</div><div>'
+            '<div class="exp-titulo">Exportar calendário</div>'
+            '<div class="exp-sub">Baixe o calendário em PDF (visual) ou Excel, completo ou por região.</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+        _painel_exportacao(df_base, chave, incluir_contato)
 
 
 # =====================================================================
@@ -649,8 +683,8 @@ try:
         if df.empty:
             st.info("O calendário ainda não possui eventos registrados.")
         else:
-            with st.expander("Exportar calendário (PDF ou Excel)"):
-                bloco_exportacao(df, "pub", incluir_contato=False)
+            bloco_exportacao(df, "pub", incluir_contato=False)
+            st.write("")
 
             df_exibicao = df.copy()
             f1, f2 = st.columns(2)
@@ -1040,7 +1074,6 @@ try:
 
 
             elif st.session_state["sub_lideranca"] == "Exportar calendário":
-                st.markdown("#### Exportar calendário")
                 st.caption("Na área da liderança, a exportação inclui cargo e WhatsApp dos responsáveis.")
                 bloco_exportacao(df, "adm", incluir_contato=True)
             else:
