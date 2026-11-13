@@ -4,6 +4,7 @@ import altair as alt
 import gspread
 from datetime import datetime
 import json
+import unicodedata
 
 # =====================================================================
 # 1. CONFIGURAÇÃO INICIAL
@@ -207,6 +208,100 @@ def salvar_lote_no_banco(dados_novos_lista):
 
 
 # =====================================================================
+# 3b. REGRAS DE AGENDA (PRIORIDADE E CHOQUES)
+# =====================================================================
+# Prioridade: 1 = Alta (aniversário de congregação), 2 = Média (aniversário
+# de UAC/UHC), 3 = Baixa (demais atividades).
+# Choque: datas que se sobrepõem E (mesma região OU um dos eventos é
+# aniversário de congregação, que não pode coincidir com nada, nem em
+# regiões diferentes).
+NOME_PRIORIDADE = {1: "Alta", 2: "Média", 3: "Baixa"}
+
+
+def _norm(texto):
+    return unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode().lower().strip()
+
+
+def peso_evento(tipo):
+    t = _norm(tipo)
+    if "aniversario" in t and "congrega" in t:
+        return 1
+    if "aniversario" in t and ("uac" in t or "uhc" in t):
+        return 2
+    return 3
+
+
+def _para_data(valor):
+    return pd.to_datetime(valor, dayfirst=True, errors="coerce")
+
+
+def _registro(nome, regiao, tipo, inicio, fim, origem):
+    ini = _para_data(inicio)
+    if pd.isna(ini):
+        return None
+    f = _para_data(fim)
+    if pd.isna(f) or f < ini:
+        f = ini
+    return {"nome": str(nome), "regiao": str(regiao), "tipo": str(tipo),
+            "ini": ini, "fim": f, "peso": peso_evento(tipo), "origem": origem}
+
+
+def registros_da_planilha(df_base):
+    regs = []
+    if df_base is None or df_base.empty:
+        return regs
+    for _, r in df_base.iterrows():
+        reg = _registro(
+            r.get("Nome da Festividade", ""), r.get("Região da Congregação", ""),
+            r.get("Tipo de Festividade", ""), r.get("Data de Inicio da Festividade"),
+            r.get("Data Final da Festividade"), "Planilha",
+        )
+        if reg:
+            regs.append(reg)
+    return regs
+
+
+def registros_da_fila():
+    regs = []
+    for e in st.session_state["eventos_temporarios"]:
+        reg = _registro(e["Festividade"], e["Regiao"], e["Tipo"], e["Inicio"], e["Fim"], "Fila")
+        if reg:
+            regs.append(reg)
+    return regs
+
+
+def motivo_do_choque(a, b):
+    if not (a["ini"] <= b["fim"] and b["ini"] <= a["fim"]):
+        return None
+    ra, rb = _norm(a["regiao"]), _norm(b["regiao"])
+    if ra and ra == rb:
+        return "Mesma região"
+    if a["peso"] == 1 or b["peso"] == 1:
+        return "Aniversário de congregação"
+    return None
+
+
+def choques_do_novo(novo, base):
+    return [(b, m) for b in base if (m := motivo_do_choque(novo, b))]
+
+
+def todos_os_choques(regs):
+    pares = []
+    for i in range(len(regs)):
+        for j in range(i + 1, len(regs)):
+            m = motivo_do_choque(regs[i], regs[j])
+            if m:
+                pares.append((regs[i], regs[j], m))
+    return pares
+
+
+def descrever(reg):
+    ini, fim = reg["ini"].strftime("%d/%m/%Y"), reg["fim"].strftime("%d/%m/%Y")
+    periodo = ini if ini == fim else f"{ini} a {fim}"
+    return f"{reg['nome']} ({reg['regiao']}, {periodo})"
+
+
+# =====================================================================
 # 4. MENU LATERAL
 # =====================================================================
 with st.sidebar:
@@ -325,6 +420,7 @@ try:
             for col in ["Data de Inicio da Festividade", "Data Final da Festividade"]:
                 publico[col] = pd.to_datetime(publico[col], dayfirst=True, errors="coerce")
             publico = publico.sort_values("Data de Inicio da Festividade")
+            publico["Prioridade"] = publico["Tipo de Festividade"].map(lambda t: NOME_PRIORIDADE[peso_evento(t)])
 
             st.dataframe(
                 publico,
@@ -336,6 +432,7 @@ try:
                     "Região da Congregação": st.column_config.TextColumn("Região"),
                     "Nome da Festividade": st.column_config.TextColumn("Festividade", width="large"),
                     "Tipo de Festividade": st.column_config.TextColumn("Tipo"),
+                    "Prioridade": st.column_config.TextColumn("Prioridade"),
                     "Nome Completo": st.column_config.TextColumn("Responsável"),
                 },
             )
@@ -364,6 +461,18 @@ try:
     elif pagina == "Cadastro de eventos":
         st.title("Cadastro de novo evento")
 
+        with st.expander("Regras de agenda e prioridade"):
+            st.markdown(
+                "- **Prioridade alta:** aniversário de congregação.\n"
+                "- **Prioridade média:** aniversário de UAC e de UHC.\n"
+                "- **Prioridade baixa:** demais atividades.\n"
+                "- **Mesma região:** não pode haver eventos em datas que se sobrepõem.\n"
+                "- **Regiões diferentes:** os eventos podem coincidir, exceto aniversários "
+                "de congregação, que não podem coincidir com nenhum outro evento.\n"
+                "- Um evento de prioridade maior pode ocupar a data de um de prioridade menor. "
+                "Nesse caso, o menor fica sinalizado para remanejamento na área da liderança."
+            )
+
         with st.form("form_evento", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
@@ -374,7 +483,7 @@ try:
                 congregacao = st.text_input("Nome da congregação")
             with col2:
                 festividade = st.text_input("Nome da festividade")
-                tipo = st.selectbox("Tipo de festividade", ["", "Aniversário de Congregação", "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"])
+                tipo = st.selectbox("Tipo de festividade", ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC", "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"])
                 data_inicio = st.date_input("Data de início", format="DD/MM/YYYY")
                 data_fim = st.date_input("Data final", format="DD/MM/YYYY")
 
@@ -385,12 +494,33 @@ try:
                 elif data_fim < data_inicio:
                     st.error("A data final não pode ser anterior à data de início.")
                 else:
-                    st.session_state["eventos_temporarios"].append({
-                        "Nome": nome, "Cargo": cargo, "Whats": whatsapp, "Regiao": regiao,
-                        "Congregacao": congregacao, "Festividade": festividade, "Tipo": tipo,
-                        "Inicio": data_inicio.strftime("%d/%m/%Y"), "Fim": data_fim.strftime("%d/%m/%Y"),
-                    })
-                    st.success("Evento adicionado à fila.")
+                    novo = _registro(
+                        festividade, regiao, tipo,
+                        data_inicio.strftime("%d/%m/%Y"), data_fim.strftime("%d/%m/%Y"), "Novo",
+                    )
+                    base = registros_da_planilha(df) + registros_da_fila()
+                    conflitos = choques_do_novo(novo, base)
+                    impeditivos = [(c, m) for c, m in conflitos if c["peso"] <= novo["peso"]]
+                    if impeditivos:
+                        c, m = impeditivos[0]
+                        st.error(
+                            f"Choque de datas ({m.lower()}): já existe {descrever(c)}, "
+                            f"com prioridade {NOME_PRIORIDADE[c['peso']].lower()}. Escolha outra data."
+                        )
+                    else:
+                        st.session_state["eventos_temporarios"].append({
+                            "Nome": nome, "Cargo": cargo, "Whats": whatsapp, "Regiao": regiao,
+                            "Congregacao": congregacao, "Festividade": festividade, "Tipo": tipo,
+                            "Inicio": data_inicio.strftime("%d/%m/%Y"), "Fim": data_fim.strftime("%d/%m/%Y"),
+                        })
+                        if conflitos:
+                            nomes = "; ".join(descrever(c) for c, _ in conflitos)
+                            st.warning(
+                                "Evento adicionado à fila. Ele tem prioridade maior e ocupa a data de: "
+                                f"{nomes}. A liderança será avisada para remanejar."
+                            )
+                        else:
+                            st.success("Evento adicionado à fila.")
 
         if st.session_state["eventos_temporarios"]:
             st.markdown("#### Fila de envio")
@@ -403,17 +533,29 @@ try:
                 st.session_state["eventos_temporarios"] = []
                 st.rerun()
             if b2.button("Enviar para o banco de dados"):
-                data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                linhas = [
-                    [data_atual, r["Nome"], r["Cargo"], r["Whats"], r["Regiao"],
-                     r["Congregacao"], "", "", "", r["Festividade"], r["Tipo"],
-                     r["Inicio"], r["Fim"], ""]
-                    for r in st.session_state["eventos_temporarios"]
-                ]
-                salvar_lote_no_banco(linhas)
-                st.success("Eventos salvos com sucesso.")
-                st.session_state["eventos_temporarios"] = []
-                st.cache_data.clear()
+                carregar_dados.clear()
+                base_atual = registros_da_planilha(carregar_dados())
+                problemas = []
+                for e in st.session_state["eventos_temporarios"]:
+                    novo = _registro(e["Festividade"], e["Regiao"], e["Tipo"], e["Inicio"], e["Fim"], "Fila")
+                    for c, m in choques_do_novo(novo, base_atual):
+                        if c["peso"] <= novo["peso"]:
+                            problemas.append(f"{descrever(novo)} conflita com {descrever(c)}")
+                if problemas:
+                    st.error("Nada foi enviado. Outro evento ocupou estas datas enquanto você preenchia:\n\n- "
+                             + "\n- ".join(problemas))
+                else:
+                    data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    linhas = [
+                        [data_atual, r["Nome"], r["Cargo"], r["Whats"], r["Regiao"],
+                         r["Congregacao"], "", "", "", r["Festividade"], r["Tipo"],
+                         r["Inicio"], r["Fim"], ""]
+                        for r in st.session_state["eventos_temporarios"]
+                    ]
+                    salvar_lote_no_banco(linhas)
+                    st.success("Eventos salvos com sucesso.")
+                    st.session_state["eventos_temporarios"] = []
+                    st.cache_data.clear()
 
     # =================================================================
     # PÁGINA: ÁREA DA LIDERANÇA
@@ -446,22 +588,26 @@ try:
                 st.rerun()
 
             if not df.empty:
-                st.markdown("#### Choques de datas")
-                contagem_datas = df["Data de Inicio da Festividade"].value_counts()
-                choques = df[df["Data de Inicio da Festividade"].isin(contagem_datas[contagem_datas > 1].index)]
-
-                if not choques.empty:
-                    st.error(f"Foram detectados {len(choques)} eventos com choque de data (mesmo dia de início).")
-
-                    def destacar_choques(row):
-                        data = row.get("Data de Inicio da Festividade", "")
-                        if data != "" and contagem_datas.get(data, 0) > 1:
-                            return ["background-color: #FDE2E2; color: #7F1D1D; font-weight: 600"] * len(row)
-                        return [""] * len(row)
-
-                    st.dataframe(df.style.apply(destacar_choques, axis=1), use_container_width=True, hide_index=True)
+                st.markdown("#### Choques de agenda")
+                pares = todos_os_choques(registros_da_planilha(df))
+                if pares:
+                    st.error(f"Foram detectados {len(pares)} choque(s) de agenda.")
+                    linhas = []
+                    for a_, b_, motivo in pares:
+                        if a_["peso"] < b_["peso"]:
+                            remanejar = descrever(b_)
+                        elif b_["peso"] < a_["peso"]:
+                            remanejar = descrever(a_)
+                        else:
+                            remanejar = "Mesma prioridade: a liderança define"
+                        linhas.append({
+                            "Evento A": descrever(a_), "Prioridade A": NOME_PRIORIDADE[a_["peso"]],
+                            "Evento B": descrever(b_), "Prioridade B": NOME_PRIORIDADE[b_["peso"]],
+                            "Motivo": motivo, "Deve remanejar": remanejar,
+                        })
+                    st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
                 else:
-                    st.success("O calendário está limpo. Nenhum choque de data detectado.")
+                    st.success("A agenda está limpa. Nenhum choque detectado.")
 
                 st.markdown("#### Alteração de datas")
                 st.info(
