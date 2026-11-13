@@ -616,17 +616,28 @@ try:
             congregacao = st.text_input("Nome da congregação", key=f"cad_outra_{regiao}")
 
         st.markdown("#### Dados do evento")
-        with st.form("form_evento", clear_on_submit=True):
+
+        # Depois de adicionar um evento, limpa só os campos do evento.
+        # Nome, cargo e WhatsApp ficam preenchidos para os próximos cadastros.
+        if st.session_state.pop("limpar_evento", False):
+            for k in ("cad_festividade", "cad_tipo", "cad_data_inicio", "cad_data_fim"):
+                st.session_state.pop(k, None)
+        msg_cadastro = st.session_state.pop("msg_cadastro", None)
+        if msg_cadastro:
+            (st.warning if msg_cadastro[0] == "warning" else st.success)(msg_cadastro[1])
+
+        with st.form("form_evento", clear_on_submit=False):
+            st.caption("Nome, cargo e WhatsApp são preenchidos uma vez e ficam salvos para os próximos eventos.")
             col1, col2 = st.columns(2)
             with col1:
-                nome = st.text_input("Nome completo")
-                cargo = st.selectbox("Cargo/Função", ["", "Pastor", "Dirigente", "Líder de Departamento", "Secretário"])
-                whatsapp = st.text_input("WhatsApp para contato")
+                nome = st.text_input("Nome completo", key="cad_nome")
+                cargo = st.selectbox("Cargo/Função", ["", "Pastor", "Dirigente", "Líder de Departamento", "Secretário"], key="cad_cargo")
+                whatsapp = st.text_input("WhatsApp para contato", key="cad_whats")
             with col2:
-                festividade = st.text_input("Nome da festividade")
-                tipo = st.selectbox("Tipo de festividade", ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC", "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"])
-                data_inicio = st.date_input("Data de início", format="DD/MM/YYYY")
-                data_fim = st.date_input("Data final", format="DD/MM/YYYY")
+                festividade = st.text_input("Nome da festividade", key="cad_festividade")
+                tipo = st.selectbox("Tipo de festividade", ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC", "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"], key="cad_tipo")
+                data_inicio = st.date_input("Data de início", format="DD/MM/YYYY", key="cad_data_inicio")
+                data_fim = st.date_input("Data final", format="DD/MM/YYYY", key="cad_data_fim")
 
             adicionar_btn = st.form_submit_button("Adicionar à fila")
             if adicionar_btn:
@@ -636,6 +647,8 @@ try:
                     st.error("Selecione a região da congregação.")
                 elif congregacao.strip() == "":
                     st.error("Selecione ou informe a congregação.")
+                elif tipo == "":
+                    st.error("Selecione o tipo de festividade.")
                 elif data_fim < data_inicio:
                     st.error("A data final não pode ser anterior à data de início.")
                 else:
@@ -660,12 +673,15 @@ try:
                         })
                         if conflitos:
                             nomes = "; ".join(descrever(c) for c, _ in conflitos)
-                            st.warning(
+                            st.session_state["msg_cadastro"] = (
+                                "warning",
                                 "Evento adicionado à fila. Ele tem prioridade maior e ocupa a data de: "
-                                f"{nomes}. A liderança será avisada para remanejar."
+                                f"{nomes}. A liderança será avisada para remanejar.",
                             )
                         else:
-                            st.success("Evento adicionado à fila.")
+                            st.session_state["msg_cadastro"] = ("success", "Evento adicionado à fila. Você pode cadastrar o próximo evento.")
+                        st.session_state["limpar_evento"] = True
+                        st.rerun()
 
         if st.session_state["eventos_temporarios"]:
             st.markdown("#### Fila de envio")
