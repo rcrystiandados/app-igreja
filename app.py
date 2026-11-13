@@ -757,7 +757,7 @@ try:
                 tipo = f1.selectbox(
                     "Tipo de festividade",
                     ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC",
-                     "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"],
+                     "Aniversário de Departamento", "Intercâmbio", "Evangelismo", "Outros"],
                     key="cad_tipo",
                 )
                 data_inicio = f2.date_input("Data de início", format="DD/MM/YYYY", key="cad_data_inicio")
