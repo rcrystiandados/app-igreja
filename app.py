@@ -4,6 +4,7 @@ import altair as alt
 import gspread
 from datetime import datetime
 import json
+import re
 import unicodedata
 
 # =====================================================================
@@ -19,6 +20,7 @@ st.set_page_config(
 LOGO_URL = "https://github.com/rcrystiandados/app-igreja/blob/main/logo.jpeg?raw=true"
 # Lista base de congregações. Novas congregações cadastradas na Área da liderança
 # ficam salvas na aba "Congregações" da planilha e são somadas a esta lista.
+CARGOS = ["", "Pastor", "Dirigente", "Líder de Departamento", "Secretário"]
 OUTRA_CONGREGACAO = "Outra congregação (digitar o nome)"
 CONGREGACOES_POR_REGIAO = {
     "Região Cariri": [
@@ -585,103 +587,144 @@ try:
     # =================================================================
     elif pagina == "Cadastro de eventos":
         st.title("Cadastro de novo evento")
+        resp = st.session_state.get("responsavel")
+        editando = st.session_state.get("editando_resp", False)
 
-        with st.expander("Regras de agenda e prioridade"):
-            st.markdown(
-                "- **Prioridade alta:** aniversário de congregação.\n"
-                "- **Prioridade média:** aniversário de UAC e de UHC.\n"
-                "- **Prioridade baixa:** demais atividades.\n"
-                "- **Mesma região:** não pode haver eventos em datas que se sobrepõem.\n"
-                "- **Regiões diferentes:** os eventos podem coincidir, exceto aniversários "
-                "de congregação, que não podem coincidir com nenhum outro evento.\n"
-                "- Um evento de prioridade maior pode ocupar a data de um de prioridade menor. "
-                "Nesse caso, o menor fica sinalizado para remanejamento na área da liderança."
-            )
-
-        st.markdown("#### Congregação do evento")
-        mapa_congregacoes = lista_de_congregacoes()
-        if not any(mapa_congregacoes.values()):
-            st.warning("A lista de congregações não foi encontrada na planilha. "
-                       "Use a opção 'Outra congregação' para digitar o nome.")
-        l1, l2 = st.columns(2)
-        regiao = l1.selectbox(
-            "Região da congregação", [""] + list(mapa_congregacoes.keys()), key="cad_regiao"
-        )
-        opcoes = (sorted(mapa_congregacoes.get(regiao, [])) + [OUTRA_CONGREGACAO]) if regiao else []
-        congregacao = l2.selectbox(
-            "Congregação", [""] + opcoes, key=f"cad_congregacao_{regiao}", disabled=not regiao,
-            placeholder="Escolha a região primeiro" if not regiao else "Escolha a congregação",
-        )
-        if congregacao == OUTRA_CONGREGACAO:
-            congregacao = st.text_input("Nome da congregação", key=f"cad_outra_{regiao}")
-
-        st.markdown("#### Dados do evento")
-
-        # Depois de adicionar um evento, limpa só os campos do evento.
-        # Nome, cargo e WhatsApp ficam preenchidos para os próximos cadastros.
-        if st.session_state.pop("limpar_evento", False):
-            for k in ("cad_festividade", "cad_tipo", "cad_data_inicio", "cad_data_fim"):
-                st.session_state.pop(k, None)
-        msg_cadastro = st.session_state.pop("msg_cadastro", None)
-        if msg_cadastro:
-            (st.warning if msg_cadastro[0] == "warning" else st.success)(msg_cadastro[1])
-
-        with st.form("form_evento", clear_on_submit=False):
-            st.caption("Nome, cargo e WhatsApp são preenchidos uma vez e ficam salvos para os próximos eventos.")
-            col1, col2 = st.columns(2)
-            with col1:
-                nome = st.text_input("Nome completo", key="cad_nome")
-                cargo = st.selectbox("Cargo/Função", ["", "Pastor", "Dirigente", "Líder de Departamento", "Secretário"], key="cad_cargo")
-                whatsapp = st.text_input("WhatsApp para contato", key="cad_whats")
-            with col2:
-                festividade = st.text_input("Nome da festividade", key="cad_festividade")
-                tipo = st.selectbox("Tipo de festividade", ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC", "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"], key="cad_tipo")
-                data_inicio = st.date_input("Data de início", format="DD/MM/YYYY", key="cad_data_inicio")
-                data_fim = st.date_input("Data final", format="DD/MM/YYYY", key="cad_data_fim")
-
-            adicionar_btn = st.form_submit_button("Adicionar à fila")
-            if adicionar_btn:
-                if nome == "" or festividade == "":
-                    st.error("Preencha ao menos o nome completo e o nome da festividade.")
-                elif regiao == "":
-                    st.error("Selecione a região da congregação.")
-                elif congregacao.strip() == "":
-                    st.error("Selecione ou informe a congregação.")
-                elif tipo == "":
-                    st.error("Selecione o tipo de festividade.")
-                elif data_fim < data_inicio:
-                    st.error("A data final não pode ser anterior à data de início.")
+        # -------------------------------------------------------------
+        # ETAPA 1: dados do responsável (preenchidos uma única vez)
+        # -------------------------------------------------------------
+        if not resp or editando:
+            st.markdown("#### Etapa 1 de 2: seus dados")
+            st.caption("Preencha uma vez. Depois você poderá cadastrar quantos eventos quiser.")
+            with st.form("form_responsavel"):
+                nome_r = st.text_input("Nome completo", value=resp["nome"] if resp else "")
+                cargo_r = st.selectbox(
+                    "Cargo/Função", CARGOS,
+                    index=CARGOS.index(resp["cargo"]) if resp and resp["cargo"] in CARGOS else 0,
+                )
+                whats_r = st.text_input("WhatsApp para contato", value=resp["whats"] if resp else "",
+                                        placeholder="(83) 9 0000-0000")
+                continuar = st.form_submit_button("Continuar")
+            if continuar:
+                if nome_r.strip() == "":
+                    st.error("Informe o nome completo.")
+                elif cargo_r == "":
+                    st.error("Selecione o cargo ou função.")
+                elif len(re.sub(r"\D", "", whats_r)) < 10:
+                    st.error("Informe um WhatsApp válido, com DDD.")
                 else:
-                    novo = _registro(
-                        festividade, regiao, tipo,
-                        data_inicio.strftime("%d/%m/%Y"), data_fim.strftime("%d/%m/%Y"), "Novo",
-                    )
-                    base = registros_da_planilha(df) + registros_da_fila()
-                    conflitos = choques_do_novo(novo, base)
-                    impeditivos = [(c, m) for c, m in conflitos if c["peso"] <= novo["peso"]]
-                    if impeditivos:
-                        c, m = impeditivos[0]
-                        st.error(
-                            f"Choque de datas ({m.lower()}): já existe {descrever(c)}, "
-                            f"com prioridade {NOME_PRIORIDADE[c['peso']].lower()}. Escolha outra data."
-                        )
+                    st.session_state["responsavel"] = {
+                        "nome": nome_r.strip(), "cargo": cargo_r, "whats": whats_r.strip(),
+                    }
+                    st.session_state["editando_resp"] = False
+                    st.rerun()
+
+        # -------------------------------------------------------------
+        # ETAPA 2: cadastro dos eventos
+        # -------------------------------------------------------------
+        else:
+            nome, cargo, whatsapp = resp["nome"], resp["cargo"], resp["whats"]
+
+            with st.container(border=True):
+                r1, r2 = st.columns([5, 1], vertical_alignment="center")
+                r1.markdown(f"**Responsável:** {nome} · {cargo} · {whatsapp}")
+                if r2.button("Alterar dados", use_container_width=True):
+                    st.session_state["editando_resp"] = True
+                    st.rerun()
+
+            with st.expander("Regras de agenda e prioridade"):
+                st.markdown(
+                    "- **Prioridade alta:** aniversário de congregação.\n"
+                    "- **Prioridade média:** aniversário de UAC e de UHC.\n"
+                    "- **Prioridade baixa:** demais atividades.\n"
+                    "- **Mesma região:** não pode haver eventos em datas que se sobrepõem.\n"
+                    "- **Regiões diferentes:** os eventos podem coincidir, exceto aniversários "
+                    "de congregação, que não podem coincidir com nenhum outro evento.\n"
+                    "- Um evento de prioridade maior pode ocupar a data de um de prioridade menor. "
+                    "Nesse caso, o menor fica sinalizado para remanejamento na área da liderança."
+                )
+
+            st.markdown("#### Etapa 2 de 2: congregação e evento")
+            mapa_congregacoes = lista_de_congregacoes()
+            if not any(mapa_congregacoes.values()):
+                st.warning("A lista de congregações não foi encontrada na planilha. "
+                           "Use a opção 'Outra congregação' para digitar o nome.")
+            l1, l2 = st.columns(2)
+            regiao = l1.selectbox(
+                "Região da congregação", [""] + list(mapa_congregacoes.keys()), key="cad_regiao"
+            )
+            opcoes = (sorted(mapa_congregacoes.get(regiao, [])) + [OUTRA_CONGREGACAO]) if regiao else []
+            congregacao = l2.selectbox(
+                "Congregação", [""] + opcoes, key=f"cad_congregacao_{regiao}", disabled=not regiao,
+                placeholder="Escolha a região primeiro" if not regiao else "Escolha a congregação",
+            )
+            if congregacao == OUTRA_CONGREGACAO:
+                congregacao = st.text_input("Nome da congregação", key=f"cad_outra_{regiao}")
+
+            # Depois de adicionar um evento, limpa só os campos do evento.
+            if st.session_state.pop("limpar_evento", False):
+                for k in ("cad_festividade", "cad_tipo", "cad_data_inicio", "cad_data_fim"):
+                    st.session_state.pop(k, None)
+            msg_cadastro = st.session_state.pop("msg_cadastro", None)
+            if msg_cadastro:
+                (st.warning if msg_cadastro[0] == "warning" else st.success)(msg_cadastro[1])
+
+            with st.form("form_evento", clear_on_submit=False):
+                festividade = st.text_input("Nome da festividade", key="cad_festividade")
+                f1, f2, f3 = st.columns(3)
+                tipo = f1.selectbox(
+                    "Tipo de festividade",
+                    ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC",
+                     "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"],
+                    key="cad_tipo",
+                )
+                data_inicio = f2.date_input("Data de início", format="DD/MM/YYYY", key="cad_data_inicio")
+                data_fim = f3.date_input("Data final", format="DD/MM/YYYY", key="cad_data_fim")
+
+                adicionar_btn = st.form_submit_button("Adicionar à fila")
+                if adicionar_btn:
+                    if festividade.strip() == "":
+                        st.error("Informe o nome da festividade.")
+                    elif regiao == "":
+                        st.error("Selecione a região da congregação.")
+                    elif congregacao.strip() == "":
+                        st.error("Selecione ou informe a congregação.")
+                    elif tipo == "":
+                        st.error("Selecione o tipo de festividade.")
+                    elif data_fim < data_inicio:
+                        st.error("A data final não pode ser anterior à data de início.")
                     else:
-                        st.session_state["eventos_temporarios"].append({
-                            "Nome": nome, "Cargo": cargo, "Whats": whatsapp, "Regiao": regiao,
-                            "Congregacao": congregacao, "Festividade": festividade, "Tipo": tipo,
-                            "Inicio": data_inicio.strftime("%d/%m/%Y"), "Fim": data_fim.strftime("%d/%m/%Y"),
-                        })
-                        if conflitos:
-                            nomes = "; ".join(descrever(c) for c, _ in conflitos)
-                            st.session_state["msg_cadastro"] = (
-                                "warning",
-                                "Evento adicionado à fila. Ele tem prioridade maior e ocupa a data de: "
-                                f"{nomes}. A liderança será avisada para remanejar.",
+                        novo = _registro(
+                            festividade, regiao, tipo,
+                            data_inicio.strftime("%d/%m/%Y"), data_fim.strftime("%d/%m/%Y"), "Novo",
+                        )
+                        base = registros_da_planilha(df) + registros_da_fila()
+                        conflitos = choques_do_novo(novo, base)
+                        impeditivos = [(c, m) for c, m in conflitos if c["peso"] <= novo["peso"]]
+                        if impeditivos:
+                            c, m = impeditivos[0]
+                            st.error(
+                                f"Choque de datas ({m.lower()}): já existe {descrever(c)}, "
+                                f"com prioridade {NOME_PRIORIDADE[c['peso']].lower()}. Escolha outra data."
                             )
                         else:
-                            st.session_state["msg_cadastro"] = ("success", "Evento adicionado à fila. Você pode cadastrar o próximo evento.")
-                        st.session_state["limpar_evento"] = True
-                        st.rerun()
+                            st.session_state["eventos_temporarios"].append({
+                                "Nome": nome, "Cargo": cargo, "Whats": whatsapp, "Regiao": regiao,
+                                "Congregacao": congregacao, "Festividade": festividade.strip(), "Tipo": tipo,
+                                "Inicio": data_inicio.strftime("%d/%m/%Y"), "Fim": data_fim.strftime("%d/%m/%Y"),
+                            })
+                            if conflitos:
+                                nomes = "; ".join(descrever(c) for c, _ in conflitos)
+                                st.session_state["msg_cadastro"] = (
+                                    "warning",
+                                    "Evento adicionado à fila. Ele tem prioridade maior e ocupa a data de: "
+                                    f"{nomes}. A liderança será avisada para remanejar.",
+                                )
+                            else:
+                                st.session_state["msg_cadastro"] = (
+                                    "success", "Evento adicionado à fila. Você pode cadastrar o próximo evento.")
+                            st.session_state["limpar_evento"] = True
+                            st.rerun()
 
         if st.session_state["eventos_temporarios"]:
             st.markdown("#### Fila de envio")
