@@ -17,6 +17,30 @@ st.set_page_config(
 )
 
 LOGO_URL = "https://github.com/rcrystiandados/app-igreja/blob/main/logo.jpeg?raw=true"
+# Lista base de congregações. Novas congregações cadastradas na Área da liderança
+# ficam salvas na aba "Congregações" da planilha e são somadas a esta lista.
+OUTRA_CONGREGACAO = "Outra congregação (digitar o nome)"
+CONGREGACOES_POR_REGIAO = {
+    "Região Cariri": [
+        "IEC - São João do Cariri", "IEC - Sumé", "IEC - Serra Branca", "IEC - Monteiro",
+        "IEC - Sertânia", "IEC - Santa Luzia do Cariri", "IEC - São José dos Cordeiros",
+        "IEC - Coxixola", "IEC - Assentamento Mandacaru",
+    ],
+    "Região Curimataú": [
+        "IEC - Canoa de Dentro", "IEC - Baraúna", "IEC - Sossego", "IEC - Alto do Umbuzeiro",
+        "IEC - Pedra Lavrada", "IEC - Soledade",
+    ],
+    "Região Metropolitana": [
+        "IEC - Capim Grande", "IEC - Fagundes", "IEC - Itatuba", "IEC - São Tomé",
+        "IEC - Puxinanã", "IEC - Queimadas", "IEC - Ronaldo Cunha Lima",
+        "IEC - Santa Terezinha", "IEC - Sítio Rafael", "IEC - Sítio Bastiões",
+        "IEC - Galante", "IEC - Chã de Galante",
+    ],
+    "Região Nacional/Internacional": [
+        "IEC - Juliana/BH", "IEC - Juazeiro do Norte/CE", "IEC - Guadalajara/MX",
+    ],
+}
+
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1XEJ5z3hSdbfGEdeJFljZgZwBqYtuiI3zh6H9bLAT4ks/edit?usp=sharing"
 
 if "logado" not in st.session_state:
@@ -201,6 +225,73 @@ def _abrir_aba():
 @st.cache_data(ttl=60)
 def carregar_dados():
     return pd.DataFrame(_abrir_aba().get_all_records())
+
+
+@st.cache_data(ttl=300)
+def carregar_congregacoes():
+    """Lê a lista de congregações de uma aba da planilha cujo nome contenha 'congrega'.
+    Aceita dois formatos:
+      A) colunas 'Região' e 'Congregação' (uma congregação por linha);
+      B) uma coluna por região (o título é a região, as células são as congregações).
+    """
+    try:
+        credenciais = json.loads(st.secrets["google_credentials"])
+        gc = gspread.service_account_from_dict(credenciais)
+        planilha = gc.open_by_url(PLANILHA_URL)
+        aba = None
+        for ws in planilha.worksheets()[1:]:
+            if "congrega" in _norm(ws.title):
+                aba = ws
+                break
+        if aba is None:
+            return {}
+        dados = aba.get_all_values()
+        if not dados:
+            return {}
+        cab = [c.strip() for c in dados[0]]
+        cabn = [_norm(c) for c in cab]
+        ir = next((i for i, c in enumerate(cabn) if "regiao" in c), None)
+        ic = next((i for i, c in enumerate(cabn) if "congrega" in c and "regiao" not in c), None)
+        res = {}
+        if ir is not None and ic is not None:
+            for linha in dados[1:]:
+                if len(linha) > max(ir, ic) and linha[ir].strip() and linha[ic].strip():
+                    res.setdefault(linha[ir].strip(), []).append(linha[ic].strip())
+        else:
+            for i, regiao in enumerate(cab):
+                if not regiao:
+                    continue
+                nomes = [l[i].strip() for l in dados[1:] if len(l) > i and l[i].strip()]
+                if nomes:
+                    res[regiao] = nomes
+        return {k: sorted(set(v)) for k, v in res.items()}
+    except Exception:
+        return {}
+
+
+def salvar_congregacao(regiao, nome):
+    credenciais = json.loads(st.secrets["google_credentials"])
+    gc = gspread.service_account_from_dict(credenciais)
+    planilha = gc.open_by_url(PLANILHA_URL)
+    aba = next((ws for ws in planilha.worksheets()[1:] if "congrega" in _norm(ws.title)), None)
+    if aba is None:
+        aba = planilha.add_worksheet(title="Congregações", rows=200, cols=2)
+        aba.append_row(["Região", "Congregação"])
+    aba.append_row([regiao, nome])
+
+
+def lista_de_congregacoes():
+    """Lista base do código + congregações cadastradas na planilha."""
+    mapa = {r: list(v) for r, v in CONGREGACOES_POR_REGIAO.items()}
+    for regiao, nomes in carregar_congregacoes().items():
+        alvo = next((r for r in mapa if _norm(r) == _norm(regiao)), regiao)
+        mapa.setdefault(alvo, [])
+        existentes = {_norm(x) for x in mapa[alvo]}
+        for n in nomes:
+            if _norm(n) not in existentes:
+                mapa[alvo].append(n)
+                existentes.add(_norm(n))
+    return {r: sorted(v) for r, v in mapa.items()}
 
 
 def salvar_lote_no_banco(dados_novos_lista):
@@ -473,14 +564,30 @@ try:
                 "Nesse caso, o menor fica sinalizado para remanejamento na área da liderança."
             )
 
+        st.markdown("#### Congregação do evento")
+        mapa_congregacoes = lista_de_congregacoes()
+        if not any(mapa_congregacoes.values()):
+            st.warning("A lista de congregações não foi encontrada na planilha. "
+                       "Use a opção 'Outra congregação' para digitar o nome.")
+        l1, l2 = st.columns(2)
+        regiao = l1.selectbox(
+            "Região da congregação", [""] + list(mapa_congregacoes.keys()), key="cad_regiao"
+        )
+        opcoes = (sorted(mapa_congregacoes.get(regiao, [])) + [OUTRA_CONGREGACAO]) if regiao else []
+        congregacao = l2.selectbox(
+            "Congregação", [""] + opcoes, key=f"cad_congregacao_{regiao}", disabled=not regiao,
+            placeholder="Escolha a região primeiro" if not regiao else "Escolha a congregação",
+        )
+        if congregacao == OUTRA_CONGREGACAO:
+            congregacao = st.text_input("Nome da congregação", key=f"cad_outra_{regiao}")
+
+        st.markdown("#### Dados do evento")
         with st.form("form_evento", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
                 nome = st.text_input("Nome completo")
                 cargo = st.selectbox("Cargo/Função", ["", "Pastor", "Dirigente", "Líder de Departamento", "Secretário"])
                 whatsapp = st.text_input("WhatsApp para contato")
-                regiao = st.selectbox("Região da congregação", ["", "Região Cariri", "Região Curimataú", "Região Metropolitana", "Nacional/Internacional"])
-                congregacao = st.text_input("Nome da congregação")
             with col2:
                 festividade = st.text_input("Nome da festividade")
                 tipo = st.selectbox("Tipo de festividade", ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC", "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"])
@@ -491,6 +598,10 @@ try:
             if adicionar_btn:
                 if nome == "" or festividade == "":
                     st.error("Preencha ao menos o nome completo e o nome da festividade.")
+                elif regiao == "":
+                    st.error("Selecione a região da congregação.")
+                elif congregacao.strip() == "":
+                    st.error("Selecione ou informe a congregação.")
                 elif data_fim < data_inicio:
                     st.error("A data final não pode ser anterior à data de início.")
                 else:
@@ -587,34 +698,64 @@ try:
                 st.session_state["logado"] = False
                 st.rerun()
 
-            if not df.empty:
-                st.markdown("#### Choques de agenda")
-                pares = todos_os_choques(registros_da_planilha(df))
-                if pares:
-                    st.error(f"Foram detectados {len(pares)} choque(s) de agenda.")
-                    linhas = []
-                    for a_, b_, motivo in pares:
-                        if a_["peso"] < b_["peso"]:
-                            remanejar = descrever(b_)
-                        elif b_["peso"] < a_["peso"]:
-                            remanejar = descrever(a_)
-                        else:
-                            remanejar = "Mesma prioridade: a liderança define"
-                        linhas.append({
-                            "Evento A": descrever(a_), "Prioridade A": NOME_PRIORIDADE[a_["peso"]],
-                            "Evento B": descrever(b_), "Prioridade B": NOME_PRIORIDADE[b_["peso"]],
-                            "Motivo": motivo, "Deve remanejar": remanejar,
-                        })
-                    st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
-                else:
-                    st.success("A agenda está limpa. Nenhum choque detectado.")
+            aba_painel, aba_congregacoes = st.tabs(["Choques de agenda", "Congregações"])
+            with aba_painel:
+                if not df.empty:
+                    st.markdown("#### Choques de agenda")
+                    pares = todos_os_choques(registros_da_planilha(df))
+                    if pares:
+                        st.error(f"Foram detectados {len(pares)} choque(s) de agenda.")
+                        linhas = []
+                        for a_, b_, motivo in pares:
+                            if a_["peso"] < b_["peso"]:
+                                remanejar = descrever(b_)
+                            elif b_["peso"] < a_["peso"]:
+                                remanejar = descrever(a_)
+                            else:
+                                remanejar = "Mesma prioridade: a liderança define"
+                            linhas.append({
+                                "Evento A": descrever(a_), "Prioridade A": NOME_PRIORIDADE[a_["peso"]],
+                                "Evento B": descrever(b_), "Prioridade B": NOME_PRIORIDADE[b_["peso"]],
+                                "Motivo": motivo, "Deve remanejar": remanejar,
+                            })
+                        st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
+                    else:
+                        st.success("A agenda está limpa. Nenhum choque detectado.")
 
-                st.markdown("#### Alteração de datas")
-                st.info(
-                    "Para evitar alterações acidentais, correções de data são feitas diretamente "
-                    "no banco de dados central (Google Planilhas)."
-                )
-                st.link_button("Abrir banco de dados", PLANILHA_URL)
+                    st.markdown("#### Alteração de datas")
+                    st.info(
+                        "Para evitar alterações acidentais, correções de data são feitas diretamente "
+                        "no banco de dados central (Google Planilhas)."
+                    )
+                    st.link_button("Abrir banco de dados", PLANILHA_URL)
+
+
+            with aba_congregacoes:
+                mapa_atual = lista_de_congregacoes()
+                total = sum(len(v) for v in mapa_atual.values())
+                st.markdown("#### Cadastrar nova congregação")
+                with st.form("form_nova_congregacao", clear_on_submit=True):
+                    c1, c2 = st.columns(2)
+                    regiao_nova = c1.selectbox("Região", [""] + list(mapa_atual.keys()))
+                    nome_nova = c2.text_input("Nome da congregação", placeholder="Ex.: IEC - Nome da cidade")
+                    salvar_cong = st.form_submit_button("Cadastrar congregação")
+                if salvar_cong:
+                    nome_limpo = nome_nova.strip()
+                    if regiao_nova == "" or nome_limpo == "":
+                        st.error("Escolha a região e informe o nome da congregação.")
+                    elif _norm(nome_limpo) in {_norm(x) for x in mapa_atual.get(regiao_nova, [])}:
+                        st.error("Essa congregação já está cadastrada nesta região.")
+                    else:
+                        salvar_congregacao(regiao_nova, nome_limpo)
+                        carregar_congregacoes.clear()
+                        st.success(f"Congregação cadastrada em {regiao_nova}.")
+                        mapa_atual = lista_de_congregacoes()
+                        total = sum(len(v) for v in mapa_atual.values())
+
+                st.markdown(f"#### Congregações cadastradas ({total})")
+                for reg, nomes in mapa_atual.items():
+                    with st.expander(f"{reg} ({len(nomes)})"):
+                        st.write("\n".join(f"- {n}" for n in nomes) if nomes else "Nenhuma congregação.")
 
 except Exception as e:
     st.error(f"Erro de execução: {e}")
