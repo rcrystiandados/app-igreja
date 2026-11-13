@@ -45,6 +45,8 @@ PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1XEJ5z3hSdbfGEdeJFljZgZwB
 
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
+if "sub_lideranca" not in st.session_state:
+    st.session_state["sub_lideranca"] = "Choques de agenda"
 if "eventos_temporarios" not in st.session_state:
     st.session_state["eventos_temporarios"] = []
 
@@ -210,6 +212,26 @@ st.markdown("""
     span[data-baseweb="tag"] * {color: #FFFFFF !important;}
     div[data-testid="stDateInput"] div[data-baseweb="input"],
     div[data-testid="stDateInput"] input {background-color: #FFFFFF !important; color: #111827 !important;}
+
+    /* ---------- Título do painel, submenu e botão de link ---------- */
+    .block-container h1.titulo-sem-linha {border-bottom: none; padding-bottom: 0; margin: 0;}
+    .block-container hr.linha-titulo {border: none; border-top: 2px solid #DDE3EC; margin: .6rem 0 1.4rem 0;}
+
+    section[data-testid="stSidebar"] [class*="st-key-sub_"] button {
+        padding-left: 2rem !important; font-size: .9rem !important;
+    }
+
+    .block-container a[data-testid^="stBaseLinkButton"] {
+        background: #FFFFFF !important; border: 1.5px solid #1E3A8A !important;
+        border-radius: 6px !important; padding: .55rem 1.4rem !important;
+        text-decoration: none !important; transition: background .15s;
+    }
+    .block-container a[data-testid^="stBaseLinkButton"],
+    .block-container a[data-testid^="stBaseLinkButton"] * {
+        color: #1E3A8A !important; font-weight: 600 !important;
+    }
+    .block-container a[data-testid^="stBaseLinkButton"]:hover {background: #1E3A8A !important;}
+    .block-container a[data-testid^="stBaseLinkButton"]:hover * {color: #FFFFFF !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -405,13 +427,25 @@ with st.sidebar:
     PAGINAS = ["Início", "Calendário", "Cadastro de eventos", "Área da liderança"]
     if "pagina" not in st.session_state:
         st.session_state["pagina"] = "Início"
+    SUBMENU_LIDERANCA = [("Choques de agenda", "sub_choques"), ("Congregações", "sub_congregacoes")]
+    pagina_atual = st.session_state["pagina"]
     for nome_pag in PAGINAS:
-        ativo = st.session_state["pagina"] == nome_pag
+        eh_lideranca = nome_pag == "Área da liderança"
+        ativo = pagina_atual == nome_pag and not (eh_lideranca and st.session_state["logado"])
         if st.button(nome_pag, key=f"menu_{nome_pag}",
                      type="primary" if ativo else "secondary",
                      use_container_width=True):
             st.session_state["pagina"] = nome_pag
             st.rerun()
+        if eh_lideranca and st.session_state["logado"]:
+            for rotulo, chave in SUBMENU_LIDERANCA:
+                ativo_sub = pagina_atual == "Área da liderança" and st.session_state["sub_lideranca"] == rotulo
+                if st.button(f"› {rotulo}", key=chave,
+                             type="primary" if ativo_sub else "secondary",
+                             use_container_width=True):
+                    st.session_state["pagina"] = "Área da liderança"
+                    st.session_state["sub_lideranca"] = rotulo
+                    st.rerun()
     pagina = st.session_state["pagina"]
     st.markdown("---")
     st.markdown(
@@ -687,19 +721,25 @@ try:
                 if entrar:
                     if "senha_lideranca" in st.secrets and senha_digitada == st.secrets["senha_lideranca"]:
                         st.session_state["logado"] = True
+                        st.session_state["msg_login"] = True
                         st.rerun()
                     else:
                         st.error("Senha incorreta. Tente novamente.")
         else:
-            st.title("Painel administrativo")
-            top1, top2 = st.columns([5, 1])
-            top1.success("Autenticação realizada com sucesso.")
-            if top2.button("Sair"):
+            if st.session_state.pop("msg_login", False):
+                try:
+                    st.toast("Autenticação realizada com sucesso.", icon="✅", duration=3)
+                except TypeError:
+                    st.toast("Autenticação realizada com sucesso.", icon="✅")
+
+            t1, t2 = st.columns([5, 1], vertical_alignment="center")
+            t1.markdown('<h1 class="titulo-sem-linha">Painel administrativo</h1>', unsafe_allow_html=True)
+            if t2.button("Sair", use_container_width=True):
                 st.session_state["logado"] = False
                 st.rerun()
+            st.markdown('<hr class="linha-titulo">', unsafe_allow_html=True)
 
-            aba_painel, aba_congregacoes = st.tabs(["Choques de agenda", "Congregações"])
-            with aba_painel:
+            if st.session_state["sub_lideranca"] == "Choques de agenda":
                 if not df.empty:
                     st.markdown("#### Choques de agenda")
                     pares = todos_os_choques(registros_da_planilha(df))
@@ -727,10 +767,10 @@ try:
                         "Para evitar alterações acidentais, correções de data são feitas diretamente "
                         "no banco de dados central (Google Planilhas)."
                     )
-                    st.link_button("Abrir banco de dados", PLANILHA_URL)
+                    st.link_button("Abrir planilha do banco de dados", PLANILHA_URL)
 
 
-            with aba_congregacoes:
+            else:
                 mapa_atual = lista_de_congregacoes()
                 total = sum(len(v) for v in mapa_atual.values())
                 st.markdown("#### Cadastrar nova congregação")
