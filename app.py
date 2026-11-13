@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 import gspread
 from datetime import datetime
 import json
@@ -114,8 +115,8 @@ st.markdown("""
     :root, .stApp {color-scheme: light;}
 
     .sb-topo {text-align: center; margin: .2rem 0 1.2rem 0;}
-    .sb-logo {width: 96px; height: 96px; object-fit: cover; border-radius: 50%;
-              border: 3px solid rgba(255,255,255,.85); margin-bottom: .7rem;}
+    .sb-logo {width: 100%; max-width: 210px; height: auto; border-radius: 8px;
+              background: #FFFFFF; margin-bottom: .8rem;}
     .sb-topo .sb-titulo {margin: 0;}
 
     /* Menu: some com as bolinhas do radio */
@@ -148,6 +149,42 @@ st.markdown("""
     }
     .login-topo h2 {margin: 0 0 .4rem 0;}
     .login-topo p {color: #6B7280 !important; margin: 0;}
+
+    /* ---------- Menu lateral em botões ---------- */
+    section[data-testid="stSidebar"] div.stButton > button {
+        width: 100%; justify-content: flex-start; text-align: left;
+        padding: .65rem .9rem !important; border-radius: 6px !important;
+        background-color: transparent !important; border: none !important;
+        box-shadow: none !important; font-weight: 500 !important;
+    }
+    section[data-testid="stSidebar"] div.stButton > button * {
+        color: #FFFFFF !important; justify-content: flex-start; text-align: left;
+    }
+    section[data-testid="stSidebar"] div.stButton > button:hover {
+        background-color: rgba(255,255,255,.14) !important;
+    }
+    section[data-testid="stSidebar"] div.stButton > button[kind="primary"],
+    section[data-testid="stSidebar"] div.stButton > button[data-testid="stBaseButton-primary"] {
+        background-color: #FFFFFF !important;
+    }
+    section[data-testid="stSidebar"] div.stButton > button[kind="primary"] *,
+    section[data-testid="stSidebar"] div.stButton > button[data-testid="stBaseButton-primary"] * {
+        color: #1E3A8A !important; font-weight: 700 !important;
+    }
+
+    /* ---------- Selects e listas sempre claros ---------- */
+    div[data-baseweb="select"] > div {background-color: #FFFFFF !important; border: 1px solid #CBD5E1 !important;}
+    div[data-baseweb="select"] * {color: #111827 !important;}
+    div[data-baseweb="select"] svg {fill: #475569 !important;}
+    div[data-baseweb="popover"], div[data-baseweb="popover"] ul,
+    div[data-baseweb="popover"] li, div[data-baseweb="menu"] {
+        background-color: #FFFFFF !important; color: #111827 !important;
+    }
+    div[data-baseweb="popover"] li:hover {background-color: #E8EEFB !important;}
+    span[data-baseweb="tag"] {background-color: #1E3A8A !important;}
+    span[data-baseweb="tag"] * {color: #FFFFFF !important;}
+    div[data-testid="stDateInput"] div[data-baseweb="input"],
+    div[data-testid="stDateInput"] input {background-color: #FFFFFF !important; color: #111827 !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -179,11 +216,17 @@ with st.sidebar:
         '<div class="sb-sub">Gestão de eventos das congregações</div></div>',
         unsafe_allow_html=True,
     )
-    pagina = st.radio(
-        "Menu",
-        ["Início", "Calendário", "Cadastro de eventos", "Área da liderança"],
-        label_visibility="collapsed",
-    )
+    PAGINAS = ["Início", "Calendário", "Cadastro de eventos", "Área da liderança"]
+    if "pagina" not in st.session_state:
+        st.session_state["pagina"] = "Início"
+    for nome_pag in PAGINAS:
+        ativo = st.session_state["pagina"] == nome_pag
+        if st.button(nome_pag, key=f"menu_{nome_pag}",
+                     type="primary" if ativo else "secondary",
+                     use_container_width=True):
+            st.session_state["pagina"] = nome_pag
+            st.rerun()
+    pagina = st.session_state["pagina"]
     st.markdown("---")
     st.markdown(
         '<div class="sb-contato">Desenvolvido por <b>Rodolfo Crystian</b><br>'
@@ -300,7 +343,20 @@ try:
 
             st.markdown("#### Eventos por região")
             contagem = df_exibicao["Região da Congregação"].value_counts()
-            st.bar_chart(contagem, color="#1E3A8A", horizontal=True)
+            dfc = contagem.reset_index()
+            dfc.columns = ["Região", "Eventos"]
+            grafico = (
+                alt.Chart(dfc)
+                .mark_bar(color="#1E3A8A")
+                .encode(
+                    x=alt.X("Eventos:Q", title=None, axis=alt.Axis(tickMinStep=1, format="d")),
+                    y=alt.Y("Região:N", sort="-x", title=None),
+                )
+                .properties(height=max(120, 42 * len(dfc)), background="#FFFFFF")
+                .configure_view(strokeWidth=0)
+                .configure_axis(labelColor="#1F2937", gridColor="#E5E7EB", domainColor="#CBD5E1")
+            )
+            st.altair_chart(grafico, use_container_width=True, theme=None)
 
     # =================================================================
     # PÁGINA: CADASTRO DE EVENTOS
