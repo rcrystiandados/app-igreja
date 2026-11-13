@@ -14,6 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+LOGO_URL = "https://github.com/rcrystiandados/app-igreja/blob/main/logo.jpeg?raw=true"
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1XEJ5z3hSdbfGEdeJFljZgZwBqYtuiI3zh6H9bLAT4ks/edit?usp=sharing"
 
 if "logado" not in st.session_state:
@@ -108,6 +109,45 @@ st.markdown("""
         background-color: #FFFFFF !important; border-color: #CBD5E1 !important;
     }
     div[data-testid="stForm"] {background: #FFFFFF; border: 1px solid var(--borda); border-radius: 8px;}
+
+    /* ---------- Correções de tema e componentes ---------- */
+    :root, .stApp {color-scheme: light;}
+
+    .sb-topo {text-align: center; margin: .2rem 0 1.2rem 0;}
+    .sb-logo {width: 96px; height: 96px; object-fit: cover; border-radius: 50%;
+              border: 3px solid rgba(255,255,255,.85); margin-bottom: .7rem;}
+    .sb-topo .sb-titulo {margin: 0;}
+
+    /* Menu: some com as bolinhas do radio */
+    section[data-testid="stSidebar"] label[data-baseweb="radio"] > div:first-child,
+    section[data-testid="stSidebar"] label[data-baseweb="radio"] > span:first-child,
+    section[data-testid="stSidebar"] [data-testid="stRadio"] label > div:first-child:not([data-testid="stMarkdownContainer"]) {
+        display: none !important;
+    }
+
+    /* Campos de texto e senha sempre claros */
+    div[data-testid="stTextInput"] div[data-baseweb="input"],
+    div[data-testid="stTextInput"] div[data-baseweb="base-input"],
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stTextInput"] button {
+        background-color: #FFFFFF !important; color: #111827 !important;
+    }
+    div[data-testid="stTextInput"] div[data-baseweb="input"] {border: 1px solid #CBD5E1 !important;}
+    div[data-testid="stTextInput"] svg {fill: #475569 !important;}
+
+    /* Avisos sempre claros e legíveis */
+    div[data-testid="stAlert"] {background-color: #E8EEFB !important;}
+    div[data-testid="stAlert"] * {background-color: transparent !important; color: #1F2937 !important;}
+
+    /* Página de login */
+    .login-topo {text-align: center; margin: 1.5rem 0 1.2rem 0;}
+    .login-topo .login-icone {
+        width: 64px; height: 64px; margin: 0 auto .8rem auto; border-radius: 50%;
+        background: var(--azul-claro); display: flex; align-items: center;
+        justify-content: center; font-size: 1.8rem;
+    }
+    .login-topo h2 {margin: 0 0 .4rem 0;}
+    .login-topo p {color: #6B7280 !important; margin: 0;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -134,8 +174,9 @@ def salvar_lote_no_banco(dados_novos_lista):
 # =====================================================================
 with st.sidebar:
     st.markdown(
-        '<div class="sb-titulo">Portal Integrado<br>de Festividades</div>'
-        '<div class="sb-sub">Gestão de eventos da congregação</div>',
+        f'<div class="sb-topo"><img class="sb-logo" src="{LOGO_URL}" alt="Logo">'
+        '<div class="sb-titulo">Portal Integrado MEN</div>'
+        '<div class="sb-sub">Gestão de eventos das congregações</div></div>',
         unsafe_allow_html=True,
     )
     pagina = st.radio(
@@ -323,15 +364,23 @@ try:
     # =================================================================
     elif pagina == "Área da liderança":
         if not st.session_state["logado"]:
-            st.title("Acesso restrito à liderança")
-            st.info("Insira a senha de administrador para ver o painel de choques de datas.")
-            senha_digitada = st.text_input("Senha", type="password")
-            if st.button("Entrar"):
-                if "senha_lideranca" in st.secrets and senha_digitada == st.secrets["senha_lideranca"]:
-                    st.session_state["logado"] = True
-                    st.rerun()
-                else:
-                    st.error("Senha incorreta. Tente novamente.")
+            _, centro, _ = st.columns([1, 1.6, 1])
+            with centro:
+                st.markdown(
+                    '<div class="login-topo"><div class="login-icone">🔒</div>'
+                    '<h2>Acesso restrito à liderança</h2>'
+                    '<p>Informe a senha de administrador para ver o painel de choques de datas.</p></div>',
+                    unsafe_allow_html=True,
+                )
+                with st.form("form_login"):
+                    senha_digitada = st.text_input("Senha", type="password", placeholder="Digite a senha")
+                    entrar = st.form_submit_button("Entrar", use_container_width=True)
+                if entrar:
+                    if "senha_lideranca" in st.secrets and senha_digitada == st.secrets["senha_lideranca"]:
+                        st.session_state["logado"] = True
+                        st.rerun()
+                    else:
+                        st.error("Senha incorreta. Tente novamente.")
         else:
             st.title("Painel administrativo")
             top1, top2 = st.columns([5, 1])
