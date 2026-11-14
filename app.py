@@ -54,7 +54,7 @@ PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1XEJ5z3hSdbfGEdeJFljZgZwB
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
 if "sub_lideranca" not in st.session_state:
-    st.session_state["sub_lideranca"] = "Choques de agenda"
+    st.session_state["sub_lideranca"] = "Painel inicial"
 if "eventos_temporarios" not in st.session_state:
     st.session_state["eventos_temporarios"] = []
 
@@ -260,6 +260,13 @@ st.markdown("""
     }
     div[data-testid="stDownloadButton"] button, div[data-testid="stDownloadButton"] button * {color: #FFFFFF !important;}
     div[data-testid="stDownloadButton"] button:hover {background-color: #256649 !important;}
+
+    /* ---------- Blocos da página inicial da liderança ---------- */
+    .adm-card {padding: .2rem .2rem .4rem .2rem;}
+    .adm-tit {font-size: 1.15rem; font-weight: 700; color: #1E3A8A; margin-bottom: .5rem;}
+    .adm-num {font-size: 2.6rem; font-weight: 700; line-height: 1;}
+    .adm-lbl {font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: #64748B; margin: .2rem 0 .6rem 0;}
+    .adm-desc {font-size: .92rem; color: #475569; min-height: 2.6rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -728,6 +735,50 @@ def painel_ajuste_datas(df_base):
             st.rerun()
 
 
+def painel_inicial_lideranca(df_base):
+    """Página inicial da liderança: blocos com atalho para cada área."""
+    regs = registros_da_planilha(df_base)
+    pares = todos_os_choques(regs)
+    em_choque = {x["linha"] for a_, b_, _m in pares for x in (a_, b_) if x["linha"] is not None}
+    mapa = lista_de_congregacoes()
+    n_cong = sum(len(v) for v in mapa.values())
+
+    verde, vermelho, azul = "#2E7D5B", "#C0392B", "#1E3A8A"
+    blocos = [
+        ("Choques de agenda", "Choques de agenda", len(pares),
+         "choque(s) detectado(s)" if pares else "nenhum choque detectado",
+         "Veja quais eventos se sobrepõem e qual deve ser remanejado.",
+         vermelho if pares else verde),
+        ("Ajustar datas", "Ajustar datas", len(em_choque),
+         "evento(s) para remarcar" if em_choque else "nenhum evento para remarcar",
+         "Remarque um evento com sugestões de datas livres e sem feriados.",
+         vermelho if em_choque else verde),
+        ("Congregações", "Congregações", n_cong,
+         f"congregações em {len(mapa)} regiões",
+         "Cadastre novas congregações para aparecerem no cadastro de eventos.", azul),
+        ("Exportar calendário", "Exportar calendário", len(regs),
+         "evento(s) no calendário",
+         "Baixe o calendário em PDF ou Excel, completo ou por região, com contatos.", azul),
+    ]
+
+    st.markdown("#### O que você deseja fazer?")
+    for i in range(0, len(blocos), 2):
+        colunas = st.columns(2)
+        for coluna, (rotulo, destino, numero, legenda, descricao, cor) in zip(colunas, blocos[i:i + 2]):
+            with coluna:
+                with st.container(border=True):
+                    st.markdown(
+                        f'<div class="adm-card"><div class="adm-tit">{rotulo}</div>'
+                        f'<div class="adm-num" style="color:{cor}">{numero}</div>'
+                        f'<div class="adm-lbl">{legenda}</div>'
+                        f'<div class="adm-desc">{descricao}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("Abrir", key=f"painel_{destino}", use_container_width=True):
+                        st.session_state["sub_lideranca"] = destino
+                        st.rerun()
+
+
 # =====================================================================
 # 3c. EXPORTAÇÃO (EXCEL E PDF)
 # =====================================================================
@@ -845,8 +896,9 @@ with st.sidebar:
     PAGINAS = ["Início", "Calendário", "Cadastro de eventos", "Área da liderança"]
     if "pagina" not in st.session_state:
         st.session_state["pagina"] = "Início"
-    SUBMENU_LIDERANCA = [("Choques de agenda", "sub_choques"), ("Ajustar datas", "sub_ajuste"),
-                        ("Congregações", "sub_congregacoes"), ("Exportar calendário", "sub_exportar")]
+    SUBMENU_LIDERANCA = [("Painel inicial", "sub_painel"), ("Choques de agenda", "sub_choques"),
+                        ("Ajustar datas", "sub_ajuste"), ("Congregações", "sub_congregacoes"),
+                        ("Exportar calendário", "sub_exportar")]
     pagina_atual = st.session_state["pagina"]
     for nome_pag in PAGINAS:
         eh_lideranca = nome_pag == "Área da liderança"
@@ -855,6 +907,8 @@ with st.sidebar:
                      type="primary" if ativo else "secondary",
                      use_container_width=True):
             st.session_state["pagina"] = nome_pag
+            if eh_lideranca:
+                st.session_state["sub_lideranca"] = "Painel inicial"
             st.session_state.pop("envio_concluido", None)
             st.rerun()
         if eh_lideranca and st.session_state["logado"]:
@@ -1024,7 +1078,7 @@ try:
                 )
                 if concluido["choques"]:
                     st.warning(
-                        "Identificamos choque de datas nos eventos abaixo. Eles foram enviados e "
+                        "Identificamos choque de datas dentro da mesma região nos eventos abaixo. Eles foram enviados e "
                         "**serão analisados pela Secretária da MEN para validação**.\n\n"
                         + "\n".join(f"- {m}" for m in concluido["choques"])
                     )
@@ -1090,8 +1144,7 @@ try:
                         "- **Prioridade alta:** aniversário de congregação.\n"
                         "- **Prioridade média:** aniversário de UAC e de UHC.\n"
                         "- **Prioridade baixa:** demais atividades.\n"
-                        "- **Choque de datas:** eventos da mesma região em datas que se sobrepõem. "
-                        "Aniversário de congregação também conflita com qualquer evento de outra região.\n"
+                        "- **Choque de datas:** eventos da mesma região em datas que se sobrepõem.\n"
                         "- Você pode enviar normalmente. Se houver choque, o evento será analisado "
                         "pela Secretária da MEN para validação."
                     )
@@ -1242,13 +1295,15 @@ try:
                         carregar_dados.clear()
                         base_atual = registros_da_planilha(carregar_dados())
                         novos = registros_da_fila()
-                        # Choques são sinalizados, não bloqueiam o envio.
+                        # Só choques dentro da mesma região geram aviso; nenhum bloqueia o envio.
                         vistos, avisos = set(), []
                         for n in novos:
-                            for c, _m in choques_do_novo(n, base_atual):
-                                avisos.append(f"{descrever(n)} × {descrever(c)}")
-                        for a_, b_, _m in todos_os_choques(novos):
-                            avisos.append(f"{descrever(a_)} × {descrever(b_)}")
+                            for c, m in choques_do_novo(n, base_atual):
+                                if m == "Mesma região":
+                                    avisos.append(f"{descrever(n)} × {descrever(c)}")
+                        for a_, b_, m in todos_os_choques(novos):
+                            if m == "Mesma região":
+                                avisos.append(f"{descrever(a_)} × {descrever(b_)}")
                         avisos = [x for x in avisos if not (x in vistos or vistos.add(x))]
 
                         data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -1284,6 +1339,7 @@ try:
                 if entrar:
                     if "senha_lideranca" in st.secrets and senha_digitada == st.secrets["senha_lideranca"]:
                         st.session_state["logado"] = True
+                        st.session_state["sub_lideranca"] = "Painel inicial"
                         st.session_state["msg_login"] = True
                         st.rerun()
                     else:
@@ -1302,7 +1358,9 @@ try:
                 st.rerun()
             st.markdown('<hr class="linha-titulo">', unsafe_allow_html=True)
 
-            if st.session_state["sub_lideranca"] == "Choques de agenda":
+            if st.session_state["sub_lideranca"] == "Painel inicial":
+                painel_inicial_lideranca(df)
+            elif st.session_state["sub_lideranca"] == "Choques de agenda":
                 if not df.empty:
                     st.markdown("#### Choques de agenda")
                     pares = todos_os_choques(registros_da_planilha(df))
