@@ -8,6 +8,12 @@ import re
 import unicodedata
 
 try:
+    import consulta_gestao
+    CONSULTA_OK, CONSULTA_ERRO = True, ""
+except Exception as _erro_consulta:  # consulta_gestao.py / gestao_db.py ausentes no repositório
+    CONSULTA_OK, CONSULTA_ERRO = False, str(_erro_consulta)
+
+try:
     import exportacao
     EXPORT_OK, EXPORT_ERRO = True, ""
 except Exception as _erro_import:  # arquivo exportacao.py ausente no repositório
@@ -759,6 +765,9 @@ def painel_inicial_lideranca(df_base):
         ("Exportar calendário", "Exportar calendário", len(regs),
          "evento(s) no calendário",
          "Baixe o calendário em PDF ou Excel, completo ou por região, com contatos.", azul),
+        ("Gestão das congregações", "Gestão (consulta)", "Ver",
+         "consulta ao sistema de gestão",
+         "Veja membros, departamentos e congregações do sistema de gestão (somente leitura).", azul),
     ]
 
     st.markdown("#### O que você deseja fazer?")
@@ -777,6 +786,36 @@ def painel_inicial_lideranca(df_base):
                     if st.button("Abrir", key=f"painel_{destino}", use_container_width=True):
                         st.session_state["sub_lideranca"] = destino
                         st.rerun()
+
+
+def tela_login(descricao):
+    """Tela de senha da liderança (usada na área da liderança e na gestão das congregações)."""
+    _, centro, _ = st.columns([1, 1.6, 1])
+    with centro:
+        st.markdown(
+            '<div class="login-topo"><div class="login-icone">🔒</div>'
+            f'<h2>Acesso restrito à liderança</h2><p>{descricao}</p></div>',
+            unsafe_allow_html=True,
+        )
+        with st.form("form_login"):
+            senha_digitada = st.text_input("Senha", type="password", placeholder="Digite a senha")
+            entrar = st.form_submit_button("Entrar", use_container_width=True)
+        if entrar:
+            if "senha_lideranca" in st.secrets and senha_digitada == st.secrets["senha_lideranca"]:
+                st.session_state["logado"] = True
+                st.session_state["sub_lideranca"] = "Painel inicial"
+                st.session_state["msg_login"] = True
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Tente novamente.")
+
+
+def aviso_login():
+    if st.session_state.pop("msg_login", False):
+        try:
+            st.toast("Autenticação realizada com sucesso.", icon="✅", duration=3)
+        except TypeError:
+            st.toast("Autenticação realizada com sucesso.", icon="✅")
 
 
 # =====================================================================
@@ -898,6 +937,7 @@ with st.sidebar:
         st.session_state["pagina"] = "Início"
     SUBMENU_LIDERANCA = [("Painel inicial", "sub_painel"), ("Choques de agenda", "sub_choques"),
                         ("Ajustar datas", "sub_ajuste"), ("Congregações", "sub_congregacoes"),
+                        ("Gestão (consulta)", "sub_gestao_consulta"),
                         ("Exportar calendário", "sub_exportar")]
     pagina_atual = st.session_state["pagina"]
     for nome_pag in PAGINAS:
@@ -1325,31 +1365,9 @@ try:
     # =================================================================
     elif pagina == "Área da liderança":
         if not st.session_state["logado"]:
-            _, centro, _ = st.columns([1, 1.6, 1])
-            with centro:
-                st.markdown(
-                    '<div class="login-topo"><div class="login-icone">🔒</div>'
-                    '<h2>Acesso restrito à liderança</h2>'
-                    '<p>Informe a senha de administrador para ver o painel de choques de datas.</p></div>',
-                    unsafe_allow_html=True,
-                )
-                with st.form("form_login"):
-                    senha_digitada = st.text_input("Senha", type="password", placeholder="Digite a senha")
-                    entrar = st.form_submit_button("Entrar", use_container_width=True)
-                if entrar:
-                    if "senha_lideranca" in st.secrets and senha_digitada == st.secrets["senha_lideranca"]:
-                        st.session_state["logado"] = True
-                        st.session_state["sub_lideranca"] = "Painel inicial"
-                        st.session_state["msg_login"] = True
-                        st.rerun()
-                    else:
-                        st.error("Senha incorreta. Tente novamente.")
+            tela_login("Informe a senha de administrador para ver o painel de choques de datas.")
         else:
-            if st.session_state.pop("msg_login", False):
-                try:
-                    st.toast("Autenticação realizada com sucesso.", icon="✅", duration=3)
-                except TypeError:
-                    st.toast("Autenticação realizada com sucesso.", icon="✅")
+            aviso_login()
 
             t1, t2 = st.columns([5, 1], vertical_alignment="center")
             t1.markdown('<h1 class="titulo-sem-linha">Painel administrativo</h1>', unsafe_allow_html=True)
@@ -1392,6 +1410,13 @@ try:
             elif st.session_state["sub_lideranca"] == "Ajustar datas":
                 st.markdown("### Ajustar datas de um evento")
                 painel_ajuste_datas(df)
+            elif st.session_state["sub_lideranca"] == "Gestão (consulta)":
+                st.markdown("### Gestão das congregações (consulta)")
+                if CONSULTA_OK:
+                    consulta_gestao.renderizar()
+                else:
+                    st.warning("A consulta não está disponível: os arquivos consulta_gestao.py e gestao_db.py "
+                               f"precisam estar no repositório. Detalhe: {CONSULTA_ERRO}")
             elif st.session_state["sub_lideranca"] == "Exportar calendário":
                 st.caption("Na área da liderança, a exportação inclui cargo e WhatsApp dos responsáveis.")
                 bloco_exportacao(df, "adm", incluir_contato=True)
@@ -1421,6 +1446,7 @@ try:
                 for reg, nomes in mapa_atual.items():
                     with st.expander(f"{reg} ({len(nomes)})"):
                         st.write("\n".join(f"- {n}" for n in nomes) if nomes else "Nenhuma congregação.")
+
 
 except Exception as e:
     st.error(f"Erro de execução: {e}")
