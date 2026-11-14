@@ -413,7 +413,7 @@ def _para_data(valor):
     return pd.to_datetime(valor, dayfirst=True, errors="coerce")
 
 
-def _registro(nome, regiao, tipo, inicio, fim, origem, linha=None):
+def _registro(nome, regiao, tipo, inicio, fim, origem, linha=None, congregacao=""):
     ini = _para_data(inicio)
     if pd.isna(ini):
         return None
@@ -421,7 +421,8 @@ def _registro(nome, regiao, tipo, inicio, fim, origem, linha=None):
     if pd.isna(f) or f < ini:
         f = ini
     return {"nome": str(nome), "regiao": str(regiao), "tipo": str(tipo),
-            "ini": ini, "fim": f, "peso": peso_evento(tipo), "origem": origem, "linha": linha}
+            "ini": ini, "fim": f, "peso": peso_evento(tipo), "origem": origem, "linha": linha,
+            "congregacao": str(congregacao).strip()}
 
 
 def registros_da_planilha(df_base):
@@ -434,6 +435,7 @@ def registros_da_planilha(df_base):
             r.get("Tipo de Festividade", ""), r.get("Data de Inicio da Festividade"),
             r.get("Data Final da Festividade"), "Planilha",
             int(r["_linha"]) if "_linha" in r and str(r["_linha"]).strip() != "" else None,
+            r.get("Congregação", ""),
         )
         if reg:
             regs.append(reg)
@@ -443,7 +445,8 @@ def registros_da_planilha(df_base):
 def registros_da_fila():
     regs = []
     for e in st.session_state["eventos_temporarios"]:
-        reg = _registro(e["Festividade"], e["Regiao"], e["Tipo"], e["Inicio"], e["Fim"], "Fila")
+        reg = _registro(e["Festividade"], e["Regiao"], e["Tipo"], e["Inicio"], e["Fim"], "Fila",
+                       congregacao=e.get("Congregacao", ""))
         if reg:
             regs.append(reg)
     return regs
@@ -477,7 +480,8 @@ def todos_os_choques(regs):
 def descrever(reg):
     ini, fim = reg["ini"].strftime("%d/%m/%Y"), reg["fim"].strftime("%d/%m/%Y")
     periodo = ini if ini == fim else f"{ini} a {fim}"
-    return f"{reg['nome']} ({reg['regiao']}, {periodo})"
+    local = " · ".join(x for x in (reg.get("congregacao", ""), reg["regiao"]) if x)
+    return f"{reg['nome']} ({local}, {periodo})" if local else f"{reg['nome']} ({periodo})"
 
 
 # =====================================================================
@@ -637,7 +641,8 @@ def painel_ajuste_datas(df_base):
     def rotulo(linha):
         r = por_linha[linha]
         marca = "  [CHOQUE]" if linha in em_choque else ""
-        return f"{r['ini']:%d/%m/%Y} · {r['nome']} · {r['regiao']}{marca}"
+        local = " · ".join(x for x in (r["congregacao"], r["regiao"]) if x)
+        return f"{r['ini']:%d/%m/%Y} · {r['nome']} · {local}{marca}"
 
     escolhido = st.selectbox("Evento", list(por_linha.keys()), format_func=rotulo, key="aj_evento")
     alvo = por_linha[escolhido]
