@@ -8,12 +8,6 @@ import re
 import unicodedata
 
 try:
-    import consulta_gestao
-    CONSULTA_OK, CONSULTA_ERRO = True, ""
-except Exception as _erro_consulta:  # consulta_gestao.py / gestao_db.py ausentes no repositório
-    CONSULTA_OK, CONSULTA_ERRO = False, str(_erro_consulta)
-
-try:
     import exportacao
     EXPORT_OK, EXPORT_ERRO = True, ""
 except Exception as _erro_import:  # arquivo exportacao.py ausente no repositório
@@ -57,10 +51,6 @@ CONGREGACOES_POR_REGIAO = {
 
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1XEJ5z3hSdbfGEdeJFljZgZwBqYtuiI3zh6H9bLAT4ks/edit?usp=sharing"
 
-if "logado" not in st.session_state:
-    st.session_state["logado"] = False
-if "sub_lideranca" not in st.session_state:
-    st.session_state["sub_lideranca"] = "Painel inicial"
 if "eventos_temporarios" not in st.session_state:
     st.session_state["eventos_temporarios"] = []
 
@@ -343,31 +333,6 @@ def carregar_congregacoes():
         return {}
 
 
-def salvar_congregacao(regiao, nome):
-    credenciais = json.loads(st.secrets["google_credentials"])
-    gc = gspread.service_account_from_dict(credenciais)
-    planilha = gc.open_by_url(PLANILHA_URL)
-    aba = next((ws for ws in planilha.worksheets()[1:] if "congrega" in _norm(ws.title)), None)
-    if aba is None:
-        aba = planilha.add_worksheet(title="Congregações", rows=200, cols=2)
-        aba.append_row(["Região", "Congregação"])
-    aba.append_row([regiao, nome])
-
-
-def lista_de_congregacoes():
-    """Lista base do código + congregações cadastradas na planilha."""
-    mapa = {r: list(v) for r, v in CONGREGACOES_POR_REGIAO.items()}
-    for regiao, nomes in carregar_congregacoes().items():
-        alvo = next((r for r in mapa if _norm(r) == _norm(regiao)), regiao)
-        mapa.setdefault(alvo, [])
-        existentes = {_norm(x) for x in mapa[alvo]}
-        for n in nomes:
-            if _norm(n) not in existentes:
-                mapa[alvo].append(n)
-                existentes.add(_norm(n))
-    return {r: sorted(v) for r, v in mapa.items()}
-
-
 def salvar_lote_no_banco(dados_novos_lista):
     """Grava logo abaixo da última linha preenchida da coluna A (carimbo de data/hora).
     Não usa a detecção automática de tabela, que sobrescrevia linhas existentes."""
@@ -390,6 +355,42 @@ def salvar_lote_no_banco(dados_novos_lista):
 # aniversário de congregação, que não pode coincidir com nada, nem em
 # regiões diferentes).
 NOME_PRIORIDADE = {1: "Alta", 2: "Média", 3: "Baixa"}
+
+
+@st.cache_data(ttl=300)
+def congregacoes_do_banco():
+    """Congregações do sistema de gestão (leitura). Devolve {} se o banco não estiver configurado."""
+    try:
+        url = st.secrets.get("database_url_leitura")
+        if not url:
+            return {}
+        import gestao_db
+        banco = gestao_db.Banco(url, somente_leitura=True)
+        mapa = {}
+        for c in gestao_db.listar_congregacoes(banco):
+            if c["regiao"]:
+                mapa.setdefault(c["regiao"], []).append(c["nome"])
+        return mapa
+    except Exception:
+        return {}
+
+
+def lista_de_congregacoes():
+    """Usa o banco do sistema de gestão como fonte única; se ele não estiver disponível,
+    usa a lista do código somada à aba 'Congregações' da planilha."""
+    do_banco = congregacoes_do_banco()
+    if do_banco:
+        return {r: sorted(v) for r, v in do_banco.items()}
+    mapa = {r: list(v) for r, v in CONGREGACOES_POR_REGIAO.items()}
+    for regiao, nomes in carregar_congregacoes().items():
+        alvo = next((r for r in mapa if _norm(r) == _norm(regiao)), regiao)
+        mapa.setdefault(alvo, [])
+        existentes = {_norm(x) for x in mapa[alvo]}
+        for n in nomes:
+            if _norm(n) not in existentes:
+                mapa[alvo].append(n)
+                existentes.add(_norm(n))
+    return {r: sorted(v) for r, v in mapa.items()}
 
 
 def _formatar_whats():
@@ -501,323 +502,6 @@ def descrever(reg):
 # 3d. FERIADOS, SUGESTÃO DE DATAS E AJUSTE
 # =====================================================================
 # Feriados fixos locais. Edite esta lista para incluir feriados de outras cidades.
-FERIADOS_LOCAIS_FIXOS = {
-    (6, 24): "São João (feriado em Campina Grande)",
-    (8, 5): "Fundação da Paraíba (feriado estadual)",
-    (10, 11): "Aniversário de Campina Grande (feriado municipal)",
-}
-DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
-
-
-def _pascoa(ano):
-    a, b, c = ano % 19, ano // 100, ano % 100
-    d, e = b // 4, b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i, k = c // 4, c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    mes = (h + l - 7 * m + 114) // 31
-    dia = ((h + l - 7 * m + 114) % 31) + 1
-    return date(ano, mes, dia)
-
-
-def feriados_do_ano(ano):
-    p = _pascoa(ano)
-    f = {
-        date(ano, 1, 1): "Confraternização Universal",
-        p - timedelta(days=48): "Carnaval (ponto facultativo)",
-        p - timedelta(days=47): "Carnaval (ponto facultativo)",
-        p - timedelta(days=2): "Sexta-feira Santa",
-        p: "Páscoa",
-        date(ano, 4, 21): "Tiradentes",
-        date(ano, 5, 1): "Dia do Trabalho",
-        p + timedelta(days=60): "Corpus Christi",
-        date(ano, 9, 7): "Independência do Brasil",
-        date(ano, 10, 12): "Nossa Senhora Aparecida",
-        date(ano, 11, 2): "Finados",
-        date(ano, 11, 15): "Proclamação da República",
-        date(ano, 11, 20): "Consciência Negra",
-        date(ano, 12, 24): "Véspera de Natal (ponto facultativo)",
-        date(ano, 12, 25): "Natal",
-        date(ano, 12, 31): "Véspera de Ano-Novo (ponto facultativo)",
-    }
-    for (m, d), nome in FERIADOS_LOCAIS_FIXOS.items():
-        f[date(ano, m, d)] = nome
-    return f
-
-
-def feriados_no_periodo(ini, fim):
-    achados = []
-    for ano in range(ini.year, fim.year + 1):
-        for d, nome in feriados_do_ano(ano).items():
-            if ini <= d <= fim:
-                achados.append((d, nome))
-    return sorted(achados)
-
-
-def fmt_data(d):
-    return f"{d:%d/%m/%Y} ({DIAS_SEMANA[d.weekday()]})"
-
-
-def fmt_periodo(ini, fim):
-    return fmt_data(ini) if ini == fim else f"{fmt_data(ini)} a {fmt_data(fim)}"
-
-
-def sugerir_datas(alvo, todos, evitar_feriados=True, mesmo_dia_semana=True, limite=6, janela=180):
-    """Datas livres, com a mesma duração do evento, mais próximas da data original.
-    Respeita as regras de choque da região, os aniversários de congregação e os feriados."""
-    duracao = alvo["fim"] - alvo["ini"]
-    hoje = pd.Timestamp.today().normalize()
-    outros = [r for r in todos if r.get("linha") != alvo.get("linha")]
-    sugestoes = []
-    for delta in sorted(range(-janela, janela + 1), key=lambda x: (abs(x), x)):
-        if delta == 0 or (mesmo_dia_semana and delta % 7 != 0):
-            continue
-        ini = alvo["ini"] + pd.Timedelta(days=delta)
-        fim = ini + duracao
-        if ini < hoje or ini.year != alvo["ini"].year or fim.year != alvo["ini"].year:
-            continue
-        cand = dict(alvo, ini=ini, fim=fim)
-        if any(motivo_do_choque(cand, o) for o in outros):
-            continue
-        if evitar_feriados and feriados_no_periodo(ini.date(), fim.date()):
-            continue
-        sugestoes.append({"ini": ini, "fim": fim, "delta": delta})
-        if len(sugestoes) >= limite:
-            break
-    return sugestoes
-
-
-def atualizar_datas_planilha(alvo, novo_ini, novo_fim, motivo):
-    """Grava as novas datas na linha do evento e registra a alteração na aba 'Alterações de datas'."""
-    from gspread.utils import rowcol_to_a1
-    aba = _abrir_aba()
-    cab = [c.strip() for c in aba.row_values(1)]
-    ci = cab.index("Data de Inicio da Festividade") + 1
-    cf = cab.index("Data Final da Festividade") + 1
-    cn = cab.index("Nome da Festividade") + 1
-    linha = alvo["linha"]
-    atual = aba.row_values(linha)
-    atual += [""] * (max(ci, cf, cn) - len(atual))
-    ini_antigo, fim_antigo = alvo["ini"].strftime("%d/%m/%Y"), alvo["fim"].strftime("%d/%m/%Y")
-    if (atual[cn - 1].strip() != alvo["nome"].strip()
-            or _para_data(atual[ci - 1]) != alvo["ini"]):
-        raise ValueError("A planilha foi alterada por outra pessoa. Recarregue a página e tente de novo.")
-    aba.batch_update(
-        [{"range": rowcol_to_a1(linha, ci), "values": [[novo_ini.strftime("%d/%m/%Y")]]},
-         {"range": rowcol_to_a1(linha, cf), "values": [[novo_fim.strftime("%d/%m/%Y")]]}],
-        value_input_option="RAW",
-    )
-    planilha = aba.spreadsheet
-    try:
-        hist = planilha.worksheet("Alterações de datas")
-    except gspread.WorksheetNotFound:
-        hist = planilha.add_worksheet(title="Alterações de datas", rows=200, cols=7)
-        hist.append_row(["Data da alteração", "Festividade", "Região", "Início anterior",
-                         "Fim anterior", "Novo início", "Novo fim", "Motivo"])
-    hist.append_row([
-        datetime.now().strftime("%d/%m/%Y %H:%M:%S"), alvo["nome"], alvo["regiao"],
-        ini_antigo, fim_antigo, novo_ini.strftime("%d/%m/%Y"), novo_fim.strftime("%d/%m/%Y"), motivo,
-    ], value_input_option="RAW")
-
-
-def painel_ajuste_datas(df_base):
-    regs = registros_da_planilha(df_base)
-    regs = [r for r in regs if r["linha"] is not None]
-    if not regs:
-        st.info("Não há eventos cadastrados para ajustar.")
-        return
-
-    # aplica a data escolhida nas sugestões (antes de criar os campos de data)
-    pend = st.session_state.pop("aj_pendente", None)
-    if pend:
-        st.session_state["aj_ini"], st.session_state["aj_fim"] = pend
-    msg = st.session_state.pop("aj_msg", None)
-    if msg:
-        st.success(msg)
-
-    pares = todos_os_choques(regs)
-    em_choque = {x["linha"] for a_, b_, _m in pares for x in (a_, b_)}
-
-    st.markdown("#### 1. Escolha o evento")
-    so_choques = st.checkbox("Mostrar apenas eventos com choque de data", value=bool(em_choque),
-                             key="aj_so_choques", disabled=not em_choque)
-    lista = [r for r in regs if (r["linha"] in em_choque or not so_choques)]
-    lista.sort(key=lambda r: (r["ini"], r["nome"]))
-    if not lista:
-        st.info("Nenhum evento para mostrar.")
-        return
-    por_linha = {r["linha"]: r for r in lista}
-
-    def rotulo(linha):
-        r = por_linha[linha]
-        marca = "  [CHOQUE]" if linha in em_choque else ""
-        local = " · ".join(x for x in (r["congregacao"], r["regiao"]) if x)
-        return f"{r['ini']:%d/%m/%Y} · {r['nome']} · {local}{marca}"
-
-    escolhido = st.selectbox("Evento", list(por_linha.keys()), format_func=rotulo, key="aj_evento")
-    alvo = por_linha[escolhido]
-    outros = [r for r in regs if r["linha"] != alvo["linha"]]
-
-    if (st.session_state.get("aj_ultimo") != escolhido
-            or "aj_ini" not in st.session_state or "aj_fim" not in st.session_state):
-        st.session_state["aj_ultimo"] = escolhido
-        st.session_state["aj_ini"] = alvo["ini"].date()
-        st.session_state["aj_fim"] = alvo["fim"].date()
-
-    with st.container(border=True):
-        st.markdown(
-            f"**{alvo['nome']}**  \n{alvo['tipo']} · prioridade **{NOME_PRIORIDADE[alvo['peso']].lower()}**  \n"
-            f"{alvo['congregacao'] or '-'} · {alvo['regiao']}  \n"
-            f"Período atual: **{fmt_periodo(alvo['ini'].date(), alvo['fim'].date())}**"
-        )
-    atuais = choques_do_novo(alvo, outros)
-    if atuais:
-        st.warning("Este evento está em choque com:\n\n" + "\n".join(
-            f"- {descrever(c)}  ({m.lower()}, prioridade {NOME_PRIORIDADE[c['peso']].lower()})" for c, m in atuais))
-    else:
-        st.success("Este evento não tem choque de datas.")
-
-    # ---------------- sugestões ----------------
-    st.markdown("#### 2. Datas sugeridas")
-    o1, o2 = st.columns(2)
-    evitar = o1.checkbox("Evitar feriados e pontos facultativos", value=True, key="aj_feriados")
-    manter = o2.checkbox("Manter o mesmo dia da semana", value=True, key="aj_semana")
-    sugestoes = sugerir_datas(alvo, regs, evitar_feriados=evitar, mesmo_dia_semana=manter)
-    if not sugestoes:
-        st.info("Não encontrei datas livres neste ano com essas opções. Tente desmarcar uma delas "
-                "ou escolha a data manualmente abaixo.")
-    for i, sg in enumerate(sugestoes):
-        dias = abs(sg["delta"])
-        quando = f"{dias} dia(s) {'depois' if sg['delta'] > 0 else 'antes'}"
-        with st.container(border=True):
-            c1, c2, c3 = st.columns([5, 2, 1.4], vertical_alignment="center")
-            c1.markdown(f"**{fmt_periodo(sg['ini'].date(), sg['fim'].date())}**")
-            c2.caption(f"{quando} · sem choques" + (" e sem feriados" if evitar else ""))
-            if c3.button("Escolher", key=f"aj_sug_{i}", use_container_width=True):
-                st.session_state["aj_pendente"] = (sg["ini"].date(), sg["fim"].date())
-                st.rerun()
-
-    # ---------------- ajuste manual ----------------
-    st.markdown("#### 3. Confirme a nova data")
-    d1, d2 = st.columns(2)
-    novo_ini = d1.date_input("Nova data de início", format="DD/MM/YYYY", key="aj_ini")
-    if st.session_state.get("aj_fim") is None or st.session_state["aj_fim"] < novo_ini:
-        st.session_state["aj_fim"] = novo_ini
-    novo_fim = d2.date_input("Nova data final", format="DD/MM/YYYY", min_value=novo_ini, key="aj_fim")
-
-    cand = dict(alvo, ini=pd.Timestamp(novo_ini), fim=pd.Timestamp(novo_fim))
-    conflitos = choques_do_novo(cand, outros)
-    feriados = feriados_no_periodo(novo_ini, novo_fim)
-    if conflitos:
-        st.error("A nova data entra em choque com:\n\n" + "\n".join(
-            f"- {descrever(c)}  ({m.lower()})" for c, m in conflitos))
-    else:
-        st.success("A nova data não tem choque com a agenda.")
-    if feriados:
-        st.warning("Feriados no período: " + "; ".join(f"{d:%d/%m} ({n})" for d, n in feriados) + ".")
-    if pd.Timestamp(novo_ini) < pd.Timestamp.today().normalize():
-        st.warning("A nova data de início já passou.")
-
-    motivo = st.text_input("Motivo da alteração (opcional)", key="aj_motivo",
-                           placeholder="Ex.: choque com aniversário de congregação")
-    confirma = True
-    if conflitos:
-        confirma = st.checkbox("Salvar mesmo com choque de datas", key="aj_confirma")
-    igual = novo_ini == alvo["ini"].date() and novo_fim == alvo["fim"].date()
-    if st.button("Salvar nova data", disabled=igual or not confirma):
-        try:
-            atualizar_datas_planilha(alvo, novo_ini, novo_fim, motivo.strip())
-        except Exception as erro:
-            st.error(f"Não foi possível salvar: {erro}")
-        else:
-            st.cache_data.clear()
-            st.session_state.pop("aj_ultimo", None)
-            st.session_state["aj_msg"] = (
-                f"Datas de \"{alvo['nome']}\" atualizadas para {fmt_periodo(novo_ini, novo_fim)}."
-            )
-            st.rerun()
-
-
-def painel_inicial_lideranca(df_base):
-    """Página inicial da liderança: blocos com atalho para cada área."""
-    regs = registros_da_planilha(df_base)
-    pares = todos_os_choques(regs)
-    em_choque = {x["linha"] for a_, b_, _m in pares for x in (a_, b_) if x["linha"] is not None}
-    mapa = lista_de_congregacoes()
-    n_cong = sum(len(v) for v in mapa.values())
-
-    verde, vermelho, azul = "#2E7D5B", "#C0392B", "#1E3A8A"
-    blocos = [
-        ("Choques de agenda", "Choques de agenda", len(pares),
-         "choque(s) detectado(s)" if pares else "nenhum choque detectado",
-         "Veja quais eventos se sobrepõem e qual deve ser remanejado.",
-         vermelho if pares else verde),
-        ("Ajustar datas", "Ajustar datas", len(em_choque),
-         "evento(s) para remarcar" if em_choque else "nenhum evento para remarcar",
-         "Remarque um evento com sugestões de datas livres e sem feriados.",
-         vermelho if em_choque else verde),
-        ("Congregações", "Congregações", n_cong,
-         f"congregações em {len(mapa)} regiões",
-         "Cadastre novas congregações para aparecerem no cadastro de eventos.", azul),
-        ("Exportar calendário", "Exportar calendário", len(regs),
-         "evento(s) no calendário",
-         "Baixe o calendário em PDF ou Excel, completo ou por região, com contatos.", azul),
-        ("Gestão das congregações", "Gestão (consulta)", "Ver",
-         "consulta ao sistema de gestão",
-         "Veja membros, departamentos e congregações do sistema de gestão (somente leitura).", azul),
-    ]
-
-    st.markdown("#### O que você deseja fazer?")
-    for i in range(0, len(blocos), 2):
-        colunas = st.columns(2)
-        for coluna, (rotulo, destino, numero, legenda, descricao, cor) in zip(colunas, blocos[i:i + 2]):
-            with coluna:
-                with st.container(border=True):
-                    st.markdown(
-                        f'<div class="adm-card"><div class="adm-tit">{rotulo}</div>'
-                        f'<div class="adm-num" style="color:{cor}">{numero}</div>'
-                        f'<div class="adm-lbl">{legenda}</div>'
-                        f'<div class="adm-desc">{descricao}</div></div>',
-                        unsafe_allow_html=True,
-                    )
-                    if st.button("Abrir", key=f"painel_{destino}", use_container_width=True):
-                        st.session_state["sub_lideranca"] = destino
-                        st.rerun()
-
-
-def tela_login(descricao):
-    """Tela de senha da liderança (usada na área da liderança e na gestão das congregações)."""
-    _, centro, _ = st.columns([1, 1.6, 1])
-    with centro:
-        st.markdown(
-            '<div class="login-topo"><div class="login-icone">🔒</div>'
-            f'<h2>Acesso restrito à liderança</h2><p>{descricao}</p></div>',
-            unsafe_allow_html=True,
-        )
-        with st.form("form_login"):
-            senha_digitada = st.text_input("Senha", type="password", placeholder="Digite a senha")
-            entrar = st.form_submit_button("Entrar", use_container_width=True)
-        if entrar:
-            if "senha_lideranca" in st.secrets and senha_digitada == st.secrets["senha_lideranca"]:
-                st.session_state["logado"] = True
-                st.session_state["sub_lideranca"] = "Painel inicial"
-                st.session_state["msg_login"] = True
-                st.rerun()
-            else:
-                st.error("Senha incorreta. Tente novamente.")
-
-
-def aviso_login():
-    if st.session_state.pop("msg_login", False):
-        try:
-            st.toast("Autenticação realizada com sucesso.", icon="✅", duration=3)
-        except TypeError:
-            st.toast("Autenticação realizada com sucesso.", icon="✅")
-
-
 # =====================================================================
 # 3c. EXPORTAÇÃO (EXCEL E PDF)
 # =====================================================================
@@ -932,34 +616,17 @@ with st.sidebar:
         '<div class="sb-sub">Gestão de eventos das congregações</div></div>',
         unsafe_allow_html=True,
     )
-    PAGINAS = ["Início", "Calendário", "Cadastro de eventos", "Área da liderança"]
+    PAGINAS = ["Início", "Calendário", "Cadastro de eventos"]
     if "pagina" not in st.session_state:
         st.session_state["pagina"] = "Início"
-    SUBMENU_LIDERANCA = [("Painel inicial", "sub_painel"), ("Choques de agenda", "sub_choques"),
-                        ("Ajustar datas", "sub_ajuste"), ("Congregações", "sub_congregacoes"),
-                        ("Gestão (consulta)", "sub_gestao_consulta"),
-                        ("Exportar calendário", "sub_exportar")]
     pagina_atual = st.session_state["pagina"]
     for nome_pag in PAGINAS:
-        eh_lideranca = nome_pag == "Área da liderança"
-        ativo = pagina_atual == nome_pag and not (eh_lideranca and st.session_state["logado"])
         if st.button(nome_pag, key=f"menu_{nome_pag}",
-                     type="primary" if ativo else "secondary",
+                     type="primary" if pagina_atual == nome_pag else "secondary",
                      use_container_width=True):
             st.session_state["pagina"] = nome_pag
-            if eh_lideranca:
-                st.session_state["sub_lideranca"] = "Painel inicial"
             st.session_state.pop("envio_concluido", None)
             st.rerun()
-        if eh_lideranca and st.session_state["logado"]:
-            for rotulo, chave in SUBMENU_LIDERANCA:
-                ativo_sub = pagina_atual == "Área da liderança" and st.session_state["sub_lideranca"] == rotulo
-                if st.button(f"› {rotulo}", key=chave,
-                             type="primary" if ativo_sub else "secondary",
-                             use_container_width=True):
-                    st.session_state["pagina"] = "Área da liderança"
-                    st.session_state["sub_lideranca"] = rotulo
-                    st.rerun()
     pagina = st.session_state["pagina"]
     st.markdown("---")
     st.markdown(
@@ -1244,7 +911,7 @@ try:
                 tipo = f1.selectbox(
                     "Tipo de festividade",
                     ["", "Aniversário de Congregação", "Aniversário de UAC", "Aniversário de UHC",
-                     "Aniversário de Departamento", "Intercâmbio", "Evangelismo", "Outros"],
+                     "Congresso de Departamento", "Culto de Intercâmbio", "Evangelismo", "Outros"],
                     key="cad_tipo",
                 )
                 data_inicio = f2.date_input("Data de início", format="DD/MM/YYYY", key="cad_data_inicio")
@@ -1359,94 +1026,6 @@ try:
                         st.session_state["eventos_temporarios"] = []
                         st.session_state["editando_idx"] = None
                         st.rerun()
-
-    # =================================================================
-    # PÁGINA: ÁREA DA LIDERANÇA
-    # =================================================================
-    elif pagina == "Área da liderança":
-        if not st.session_state["logado"]:
-            tela_login("Informe a senha de administrador para ver o painel de choques de datas.")
-        else:
-            aviso_login()
-
-            t1, t2 = st.columns([5, 1], vertical_alignment="center")
-            t1.markdown('<h1 class="titulo-sem-linha">Painel administrativo</h1>', unsafe_allow_html=True)
-            if t2.button("Sair", use_container_width=True):
-                st.session_state["logado"] = False
-                st.rerun()
-            st.markdown('<hr class="linha-titulo">', unsafe_allow_html=True)
-
-            if st.session_state["sub_lideranca"] == "Painel inicial":
-                painel_inicial_lideranca(df)
-            elif st.session_state["sub_lideranca"] == "Choques de agenda":
-                if not df.empty:
-                    st.markdown("#### Choques de agenda")
-                    pares = todos_os_choques(registros_da_planilha(df))
-                    if pares:
-                        st.error(f"Foram detectados {len(pares)} choque(s) de agenda.")
-                        linhas = []
-                        for a_, b_, motivo in pares:
-                            if a_["peso"] < b_["peso"]:
-                                remanejar = descrever(b_)
-                            elif b_["peso"] < a_["peso"]:
-                                remanejar = descrever(a_)
-                            else:
-                                remanejar = "Mesma prioridade: a liderança define"
-                            linhas.append({
-                                "Evento A": descrever(a_), "Prioridade A": NOME_PRIORIDADE[a_["peso"]],
-                                "Evento B": descrever(b_), "Prioridade B": NOME_PRIORIDADE[b_["peso"]],
-                                "Motivo": motivo, "Deve remanejar": remanejar,
-                            })
-                        st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
-                    else:
-                        st.success("A agenda está limpa. Nenhum choque detectado.")
-
-                    st.markdown("#### Corrigir os choques")
-                st.info("Para remarcar um evento, use **Ajustar datas** no menu lateral. O app sugere datas "
-                        "livres na região e evita feriados. A planilha continua disponível para consulta.")
-                st.link_button("Abrir planilha do banco de dados", PLANILHA_URL)
-
-
-            elif st.session_state["sub_lideranca"] == "Ajustar datas":
-                st.markdown("### Ajustar datas de um evento")
-                painel_ajuste_datas(df)
-            elif st.session_state["sub_lideranca"] == "Gestão (consulta)":
-                st.markdown("### Gestão das congregações (consulta)")
-                if CONSULTA_OK:
-                    consulta_gestao.renderizar()
-                else:
-                    st.warning("A consulta não está disponível: os arquivos consulta_gestao.py e gestao_db.py "
-                               f"precisam estar no repositório. Detalhe: {CONSULTA_ERRO}")
-            elif st.session_state["sub_lideranca"] == "Exportar calendário":
-                st.caption("Na área da liderança, a exportação inclui cargo e WhatsApp dos responsáveis.")
-                bloco_exportacao(df, "adm", incluir_contato=True)
-            else:
-                mapa_atual = lista_de_congregacoes()
-                total = sum(len(v) for v in mapa_atual.values())
-                st.markdown("#### Cadastrar nova congregação")
-                with st.form("form_nova_congregacao", clear_on_submit=True):
-                    c1, c2 = st.columns(2)
-                    regiao_nova = c1.selectbox("Região", [""] + list(mapa_atual.keys()))
-                    nome_nova = c2.text_input("Nome da congregação", placeholder="Ex.: IEC - Nome da cidade")
-                    salvar_cong = st.form_submit_button("Cadastrar congregação")
-                if salvar_cong:
-                    nome_limpo = nome_nova.strip()
-                    if regiao_nova == "" or nome_limpo == "":
-                        st.error("Escolha a região e informe o nome da congregação.")
-                    elif _norm(nome_limpo) in {_norm(x) for x in mapa_atual.get(regiao_nova, [])}:
-                        st.error("Essa congregação já está cadastrada nesta região.")
-                    else:
-                        salvar_congregacao(regiao_nova, nome_limpo)
-                        carregar_congregacoes.clear()
-                        st.success(f"Congregação cadastrada em {regiao_nova}.")
-                        mapa_atual = lista_de_congregacoes()
-                        total = sum(len(v) for v in mapa_atual.values())
-
-                st.markdown(f"#### Congregações cadastradas ({total})")
-                for reg, nomes in mapa_atual.items():
-                    with st.expander(f"{reg} ({len(nomes)})"):
-                        st.write("\n".join(f"- {n}" for n in nomes) if nomes else "Nenhuma congregação.")
-
 
 except Exception as e:
     st.error(f"Erro de execução: {e}")
